@@ -98,6 +98,6 @@ export async function syncUploadedAbis(endpoint: string) {
     return changed
   } catch (caughtError: unknown) {
     logger.warn('Failed to sync uploaded ABIs', { endpoint, caughtError })
-    return false
+    throw caughtError
   }
 }

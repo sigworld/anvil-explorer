@@ -115,6 +115,8 @@ export function ExplorerProvider(props: { children: ComponentChildren }) {
     let cancelled = false
     const client = createAnvilClient(rpcUrl)
     let hasConnectedOnce = false
+    let consecutiveFailures = 0
+    const MAX_CONSECUTIVE_FAILURES = 5
 
     function applyProgress(progress: SyncProgress) {
       if (cancelled) {
@@ -160,6 +162,7 @@ export function ExplorerProvider(props: { children: ComponentChildren }) {
           setChainMeta((current) => (areChainMetaEqual(current, result.meta) ? current : result.meta))
           await loadStats(result.changed)
           hasConnectedOnce = true
+          consecutiveFailures = 0
           setStatus('ready')
           setStatusMessage(
             result.changed
@@ -171,12 +174,19 @@ export function ExplorerProvider(props: { children: ComponentChildren }) {
             return
           }
 
+          consecutiveFailures++
           const message =
             caughtError instanceof Error ? caughtError.message : 'Failed to connect to Anvil'
           setError(message)
           setStatus('error')
-          setStatusMessage('Waiting to reconnect')
           logger.error('Sync cycle failed', caughtError)
+
+          if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+            setStatusMessage('Connection failed — use Reconnect to retry')
+            return
+          }
+
+          setStatusMessage('Waiting to reconnect')
         }
 
         await wait(2000)
@@ -192,17 +202,31 @@ export function ExplorerProvider(props: { children: ComponentChildren }) {
 
   useEffect(() => {
     let cancelled = false
+    let consecutiveFailures = 0
+    const MAX_CONSECUTIVE_FAILURES = 5
 
     async function run() {
       while (!cancelled) {
-        const changed = await syncUploadedAbis(abiApiUrl)
+        try {
+          const changed = await syncUploadedAbis(abiApiUrl)
 
-        if (cancelled) {
-          return
-        }
+          if (cancelled) {
+            return
+          }
 
-        if (changed) {
-          setRefreshKey((current) => current + 1)
+          consecutiveFailures = 0
+
+          if (changed) {
+            setRefreshKey((current) => current + 1)
+          }
+        } catch {
+          consecutiveFailures++
+          logger.warn(`ABI endpoint failed (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES})`)
+
+          if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+            logger.warn('ABI endpoint polling stopped — save endpoint to retry')
+            return
+          }
         }
 
         await wait(3000)
