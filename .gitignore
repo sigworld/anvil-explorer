@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.anvil-explorer/
+.DS_Store
+playwright-report/
+test-results/

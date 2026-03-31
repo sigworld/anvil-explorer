@@ -1,0 +1,27 @@
+{
+  "name": "anvil-explorer",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "smoke": "node scripts/smoke-test.cjs"
+  },
+  "dependencies": {
+    "@noble/curves": "^2.0.1",
+    "@noble/hashes": "^2.0.1",
+    "idb": "^8.0.3",
+    "preact": "^10.29.0",
+    "preact-router": "^4.1.2",
+    "viem": "^2.47.6"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.10.4",
+    "@types/node": "^24.12.0",
+    "playwright": "^1.58.2",
+    "typescript": "~5.9.3",
+    "vite": "^8.0.1"
+  }
+}
