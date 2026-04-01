@@ -1,7 +1,7 @@
 import { getBlock, getTransactionsByBlock } from '../lib/db.ts'
 import { formatBigIntString, formatNumber, formatTimestamp, parseNumberInput } from '../lib/format.ts'
 import { createAnvilClient, getBlockByNumber } from '../lib/rpc.ts'
-import { normalizeBlock, normalizeTransaction } from '../lib/sync.ts'
+import { normalizeBlock, normalizeTransaction, persistBlock } from '../lib/sync.ts'
 import { buildTransactionSummaries } from '../lib/transaction-meta.ts'
 import { useAsyncResource } from '../hooks/use-async-resource.ts'
 import { useExplorer } from '../hooks/use-explorer.tsx'
@@ -26,7 +26,7 @@ type RouteProps = {
 }
 
 export function BlockPage(props: RouteProps) {
-  const { refreshKey, rpcUrl, chainMeta } = useExplorer()
+  const { actions, refreshKey, rpcUrl, chainMeta } = useExplorer()
   const blockNumber = parseNumberInput(props.number ?? '')
   const forkBlockNumber = chainMeta?.forkConfig?.forkBlockNumber ?? null
   const isPreFork = forkBlockNumber !== null && blockNumber !== null && blockNumber < forkBlockNumber
@@ -46,21 +46,34 @@ export function BlockPage(props: RouteProps) {
         return {
           block,
           transactions: await buildTransactionSummaries(transactions),
-          preFork: false as const,
         }
       }
 
-      if (isPreFork) {
-        const client = createAnvilClient(rpcUrl)
+      // Block not indexed — fetch from RPC and index it
+      const client = createAnvilClient(rpcUrl)
+      try {
         const rpcBlock = await getBlockByNumber(client, blockNumber)
-        return {
-          block: normalizeBlock(rpcBlock),
-          transactions: await buildTransactionSummaries(rpcBlock.transactions.map(normalizeTransaction)),
-          preFork: true as const,
+        if (!rpcBlock) {
+          return { block: undefined, transactions: [] }
         }
-      }
 
-      return { block: undefined, transactions: [], preFork: false as const }
+        await persistBlock(client, rpcBlock)
+        actions.refresh()
+
+        const [storedBlock, storedTxs] = await Promise.all([
+          getBlock(blockNumber),
+          getTransactionsByBlock(blockNumber),
+        ])
+
+        return {
+          block: storedBlock ?? normalizeBlock(rpcBlock),
+          transactions: await buildTransactionSummaries(
+            storedTxs.length > 0 ? storedTxs : rpcBlock.transactions.map(normalizeTransaction),
+          ),
+        }
+      } catch {
+        return { block: undefined, transactions: [] }
+      }
     },
     [refreshKey, blockNumber, isPreFork, rpcUrl],
     null,
@@ -77,15 +90,10 @@ export function BlockPage(props: RouteProps) {
         <EmptyState title="Invalid block number" body="Use a decimal block number in the route or search box." />
       )}
       {!resource.loading && resource.data && !resource.data.block && (
-        <EmptyState title="Block not found" body="That block number is not in IndexedDB yet." />
+        <EmptyState title="Block not found" body="Could not find this block in IndexedDB or via RPC." />
       )}
       {resource.data?.block && (
         <>
-          {resource.data.preFork && (
-            <p class="banner">
-              Pre-fork block fetched live from the origin chain. Not stored in IndexedDB.
-            </p>
-          )}
           <KeyValueGrid
             items={[
               { label: 'Hash', value: <span class="mono">{resource.data.block.hash}</span> },

@@ -7,6 +7,7 @@ import {
   getReceipt,
   getResolvedAddressLabel,
   getTransaction,
+  storeBlockBundle,
   upsertAbi,
   upsertAddressLabel,
 } from '../lib/db.ts'
@@ -18,7 +19,8 @@ import { buildTransactionSummary } from '../lib/transaction-meta.ts'
 import type { TokenBalanceEffect, TraceNode } from '../lib/types.ts'
 import { useAsyncResource } from '../hooks/use-async-resource.ts'
 import { useExplorer } from '../hooks/use-explorer.tsx'
-import { createAnvilClient, getAddressKind } from '../lib/rpc.ts'
+import { createAnvilClient, getAddressKind, getTransactionByHash, getReceiptByHash, getBlockByNumber } from '../lib/rpc.ts'
+import { normalizeTransaction, normalizeBlock, normalizeReceipt, normalizeLogs } from '../lib/sync.ts'
 import {
   AppLink,
   AddressLink,
@@ -275,14 +277,47 @@ export function TxPage(props: RouteProps) {
         return null
       }
 
-      const [transaction, receipt, logs] = await Promise.all([
+      let [transaction, receipt, logs] = await Promise.all([
         getTransaction(props.hash),
         getReceipt(props.hash),
         getLogsByTxHash(props.hash),
       ])
 
       if (!transaction) {
-        return null
+        const client = createAnvilClient(rpcUrl)
+        const txHash = props.hash as `0x${string}`
+        const rpcTx = await getTransactionByHash(client, txHash)
+        if (!rpcTx) {
+          return null
+        }
+
+        transaction = normalizeTransaction(rpcTx)
+        const rpcReceipt = await getReceiptByHash(client, txHash)
+
+        // Index the entire block so all sibling txs and logs are available
+        if (rpcTx.blockNumber) {
+          const rpcBlock = await getBlockByNumber(client, Number(rpcTx.blockNumber))
+          const blockRecord = normalizeBlock(rpcBlock)
+          const txRecords = rpcBlock.transactions.map(normalizeTransaction)
+          const receipts = (
+            await Promise.all(rpcBlock.transactions.map((t) => getReceiptByHash(client, t.hash)))
+          ).filter((r): r is NonNullable<typeof r> => r !== null)
+          const receiptRecords = receipts.map(normalizeReceipt)
+          const logRecords = receipts.flatMap(normalizeLogs)
+          await storeBlockBundle(blockRecord, txRecords, receiptRecords, logRecords)
+
+          // Re-read from IndexedDB so local data is consistent
+          ;[transaction, receipt, logs] = await Promise.all([
+            getTransaction(props.hash).then((t) => t ?? transaction!),
+            getReceipt(props.hash),
+            getLogsByTxHash(props.hash),
+          ])
+          actions.refresh()
+        } else if (rpcReceipt) {
+          // Pending tx with receipt but no block — store just the tx + receipt
+          receipt = normalizeReceipt(rpcReceipt)
+          logs = normalizeLogs(rpcReceipt)
+        }
       }
 
       const client = createAnvilClient(rpcUrl)
@@ -377,7 +412,7 @@ export function TxPage(props: RouteProps) {
         <EmptyState title="Missing hash" body="Use a transaction hash in the route or search box." />
       )}
       {!resource.loading && props.hash && !resource.data && (
-        <EmptyState title="Transaction not found" body="That hash is not indexed yet." />
+        <EmptyState title="Transaction not found" body="Could not find this transaction in IndexedDB or via RPC." />
       )}
       {resource.data && (
         <>

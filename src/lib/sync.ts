@@ -83,7 +83,7 @@ export function normalizeTransaction(transaction: RpcTransaction): TransactionRe
   }
 }
 
-function normalizeReceipt(receipt: RpcReceipt): ReceiptRecord {
+export function normalizeReceipt(receipt: RpcReceipt): ReceiptRecord {
   return {
     txHash: receipt.transactionHash,
     blockHash: receipt.blockHash,
@@ -100,7 +100,7 @@ function normalizeReceipt(receipt: RpcReceipt): ReceiptRecord {
   }
 }
 
-function normalizeLogs(receipt: RpcReceipt): LogRecord[] {
+export function normalizeLogs(receipt: RpcReceipt): LogRecord[] {
   return receipt.logs.map((log) => ({
     address: getAddress(log.address),
     blockHash: log.blockHash,
@@ -161,7 +161,7 @@ async function recoverFromRewind(client: AnvilClient, latestBlockNumber: number,
   return true
 }
 
-async function persistBlock(client: AnvilClient, rpcBlock: RpcBlock) {
+export async function persistBlock(client: AnvilClient, rpcBlock: RpcBlock) {
   const block = normalizeBlock(rpcBlock)
   const transactions = rpcBlock.transactions.map(normalizeTransaction)
   const receipts = (

@@ -17,6 +17,7 @@ import type {
   TokenHolderBalance,
   RpcBlock,
   RpcReceipt,
+  RpcTransaction,
 } from './types.ts'
 
 export type AnvilClient = PublicClient
@@ -93,6 +94,10 @@ export async function getLatestBlockNumber(client: AnvilClient) {
 
 export async function getBlockByNumber(client: AnvilClient, blockNumber: number) {
   return rpcRequest<RpcBlock>(client, 'eth_getBlockByNumber', [toHex(blockNumber), true])
+}
+
+export async function getTransactionByHash(client: AnvilClient, txHash: Hex) {
+  return rpcRequest<RpcTransaction | null>(client, 'eth_getTransactionByHash', [txHash])
 }
 
 export async function getReceiptByHash(client: AnvilClient, txHash: Hex) {
