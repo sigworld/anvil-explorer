@@ -146,7 +146,7 @@ export function TransactionsPage(_: RouteProps) {
         />
       )}
       {transactions.data.length > 0 && (
-        <SummaryTable className="summary-table-transactions summary-table-transactions-wide" headers={['Hash', 'Timestamp', 'Type', 'Method', 'Initiator', 'Block', 'Status']}>
+        <SummaryTable className="summary-table-transactions summary-table-transactions-wide" headers={['Hash', 'Timestamp', 'Type', 'Initiator', 'Method', 'Target', 'Block', 'Status']}>
           {transactions.data.map((transaction, index) => {
             const timestamp = formatTransactionListTimestamp(transaction.timestamp)
 
@@ -163,6 +163,9 @@ export function TransactionsPage(_: RouteProps) {
                   </div>
                 </td>
                 <td>
+                  <AddressLink address={transaction.from} />
+                </td>
+                <td>
                   <div class="tx-meta-stack">
                     <MethodLabel
                       method={transaction.method}
@@ -173,7 +176,7 @@ export function TransactionsPage(_: RouteProps) {
                   </div>
                 </td>
                 <td>
-                  <AddressLink address={transaction.from} />
+                  {transaction.to ? <AddressLink address={transaction.to} /> : <span class="muted">Contract Creation</span>}
                 </td>
                 <td>
                   <BlockLink number={transaction.blockNumber} />

@@ -71,15 +71,17 @@ export function formatUnitsString(
   }
 
   const asBigInt = BigInt(value)
+  const negative = asBigInt < 0n
+  const abs = negative ? -asBigInt : asBigInt
   const base = 10n ** BigInt(decimals)
-  const whole = asBigInt / base
-  const fraction = asBigInt % base
+  const whole = abs / base
+  const fraction = abs % base
   const trimmedFraction =
     fraction === 0n
       ? ''
       : `.${fraction.toString().padStart(decimals, '0').replace(/0+$/, '').slice(0, 6)}`
 
-  const formatted = `${whole.toString()}${trimmedFraction}`
+  const formatted = `${negative ? '-' : ''}${whole.toString()}${trimmedFraction}`
   return suffix ? `${formatted} ${suffix}` : formatted
 }
 

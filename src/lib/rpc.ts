@@ -12,6 +12,7 @@ import {
 import type {
   AddressKind,
   Erc20TokenInfo,
+  ForkConfig,
   TokenBalance,
   TokenHolderBalance,
   RpcBlock,
@@ -41,17 +42,47 @@ export async function rpcRequest<T>(client: AnvilClient, method: string, params:
   }) as Promise<T>
 }
 
+type AnvilNodeInfo = {
+  currentBlockNumber: Hex | number
+  currentBlockTimestamp: Hex | number
+  environment: Record<string, unknown>
+  forkConfig?: {
+    forkUrl: string
+    forkBlockNumber: Hex | number
+  } | null
+}
+
+export async function getForkConfig(client: AnvilClient): Promise<ForkConfig | null> {
+  try {
+    const info = await rpcRequest<AnvilNodeInfo>(client, 'anvil_nodeInfo')
+    const fc = info?.forkConfig
+    if (!fc?.forkBlockNumber) {
+      return null
+    }
+    return {
+      forkUrl: fc.forkUrl,
+      forkBlockNumber: typeof fc.forkBlockNumber === 'number'
+        ? fc.forkBlockNumber
+        : Number(BigInt(fc.forkBlockNumber)),
+    }
+  } catch {
+    return null
+  }
+}
+
 export async function getChainInfo(client: AnvilClient) {
-  const [chainIdHex, clientVersion, latestBlockHex] = await Promise.all([
+  const [chainIdHex, clientVersion, latestBlockHex, forkConfig] = await Promise.all([
     rpcRequest<Hex>(client, 'eth_chainId'),
     rpcRequest<string>(client, 'web3_clientVersion'),
     rpcRequest<Hex>(client, 'eth_blockNumber'),
+    getForkConfig(client),
   ])
 
   return {
     chainId: Number(chainIdHex),
     clientVersion,
     latestBlockNumber: Number(latestBlockHex),
+    forkConfig,
   }
 }
 

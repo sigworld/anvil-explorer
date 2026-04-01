@@ -25,8 +25,10 @@ type ExplorerContextValue = {
   error: string | null
   refreshKey: number
   rpcUrl: string
+  startBlock: number | null
   setAbiApiUrl: (value: string) => void
   setRpcUrl: (value: string) => void
+  setStartBlock: (value: number | null) => void
   snapshots: string[]
   status: ExplorerStatus
   stats: ExplorerStats
@@ -45,6 +47,7 @@ type ExplorerContextValue = {
 
 const STORAGE_KEY = 'anvil-explorer.rpc-url'
 const ABI_API_STORAGE_KEY = 'anvil-explorer.abi-api-url'
+const START_BLOCK_STORAGE_KEY = 'anvil-explorer.start-block'
 const DEFAULT_URL = 'http://127.0.0.1:8545'
 const EMPTY_STATS: ExplorerStats = {
   blockCount: 0,
@@ -85,7 +88,8 @@ function areChainMetaEqual(left: ChainMeta | null, right: ChainMeta | null) {
     left.latestBlockNumber === right.latestBlockNumber &&
     left.latestIndexedBlock === right.latestIndexedBlock &&
     left.latestIndexedHash === right.latestIndexedHash &&
-    left.rpcUrl === right.rpcUrl
+    left.rpcUrl === right.rpcUrl &&
+    left.forkConfig?.forkBlockNumber === right.forkConfig?.forkBlockNumber
   )
 }
 
@@ -100,12 +104,26 @@ export function ExplorerProvider(props: { children: ComponentChildren }) {
   const [chainMeta, setChainMeta] = useState<ChainMeta | null>(null)
   const [stats, setStats] = useState<ExplorerStats>(EMPTY_STATS)
   const [refreshKey, setRefreshKey] = useState(0)
+  const [startBlock, setStartBlock] = useState<number | null>(() => {
+    const stored = window.localStorage.getItem(START_BLOCK_STORAGE_KEY)
+    if (stored === null) return null
+    const parsed = Number.parseInt(stored, 10)
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
+  })
   const [snapshots, setSnapshots] = useState<string[]>([])
   const [connectionVersion, setConnectionVersion] = useState(0)
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEY, rpcUrl)
   }, [rpcUrl])
+
+  useEffect(() => {
+    if (startBlock === null) {
+      window.localStorage.removeItem(START_BLOCK_STORAGE_KEY)
+    } else {
+      window.localStorage.setItem(START_BLOCK_STORAGE_KEY, String(startBlock))
+    }
+  }, [startBlock])
 
   useEffect(() => {
     window.localStorage.setItem(ABI_API_STORAGE_KEY, abiApiUrl)
@@ -153,7 +171,7 @@ export function ExplorerProvider(props: { children: ComponentChildren }) {
       while (!cancelled) {
         try {
           setError(null)
-          const result = await syncChain(client, rpcUrl, applyProgress)
+          const result = await syncChain(client, rpcUrl, startBlock, applyProgress)
 
           if (cancelled) {
             return
@@ -198,7 +216,7 @@ export function ExplorerProvider(props: { children: ComponentChildren }) {
     return () => {
       cancelled = true
     }
-  }, [rpcUrl, connectionVersion])
+  }, [rpcUrl, startBlock, connectionVersion])
 
   useEffect(() => {
     let cancelled = false
@@ -261,8 +279,10 @@ export function ExplorerProvider(props: { children: ComponentChildren }) {
     error,
     refreshKey,
     rpcUrl,
+    startBlock,
     setAbiApiUrl,
     setRpcUrl,
+    setStartBlock,
     snapshots,
     status,
     stats,

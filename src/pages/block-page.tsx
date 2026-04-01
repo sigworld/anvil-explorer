@@ -1,5 +1,7 @@
 import { getBlock, getTransactionsByBlock } from '../lib/db.ts'
 import { formatBigIntString, formatNumber, formatTimestamp, parseNumberInput } from '../lib/format.ts'
+import { createAnvilClient, getBlockByNumber } from '../lib/rpc.ts'
+import { normalizeBlock, normalizeTransaction } from '../lib/sync.ts'
 import { buildTransactionSummaries } from '../lib/transaction-meta.ts'
 import { useAsyncResource } from '../hooks/use-async-resource.ts'
 import { useExplorer } from '../hooks/use-explorer.tsx'
@@ -24,8 +26,11 @@ type RouteProps = {
 }
 
 export function BlockPage(props: RouteProps) {
-  const { refreshKey } = useExplorer()
+  const { refreshKey, rpcUrl, chainMeta } = useExplorer()
   const blockNumber = parseNumberInput(props.number ?? '')
+  const forkBlockNumber = chainMeta?.forkConfig?.forkBlockNumber ?? null
+  const isPreFork = forkBlockNumber !== null && blockNumber !== null && blockNumber < forkBlockNumber
+
   const resource = useAsyncResource(
     async () => {
       if (blockNumber === null) {
@@ -37,12 +42,27 @@ export function BlockPage(props: RouteProps) {
         getTransactionsByBlock(blockNumber),
       ])
 
-      return {
-        block,
-        transactions: await buildTransactionSummaries(transactions),
+      if (block) {
+        return {
+          block,
+          transactions: await buildTransactionSummaries(transactions),
+          preFork: false as const,
+        }
       }
+
+      if (isPreFork) {
+        const client = createAnvilClient(rpcUrl)
+        const rpcBlock = await getBlockByNumber(client, blockNumber)
+        return {
+          block: normalizeBlock(rpcBlock),
+          transactions: await buildTransactionSummaries(rpcBlock.transactions.map(normalizeTransaction)),
+          preFork: true as const,
+        }
+      }
+
+      return { block: undefined, transactions: [], preFork: false as const }
     },
-    [refreshKey, blockNumber],
+    [refreshKey, blockNumber, isPreFork, rpcUrl],
     null,
   )
 
@@ -61,6 +81,11 @@ export function BlockPage(props: RouteProps) {
       )}
       {resource.data?.block && (
         <>
+          {resource.data.preFork && (
+            <p class="banner">
+              Pre-fork block fetched live from the origin chain. Not stored in IndexedDB.
+            </p>
+          )}
           <KeyValueGrid
             items={[
               { label: 'Hash', value: <span class="mono">{resource.data.block.hash}</span> },

@@ -30,14 +30,14 @@ Vite + Preact + preact-router + viem + idb (IndexedDB wrapper). No CSS framework
 The app does NOT call RPC for most reads. Instead:
 1. `src/lib/sync.ts` backfills blocks/txs/receipts/logs from Anvil into IndexedDB, then polls every 2s for new blocks
 2. Explorer pages read from IndexedDB via `src/lib/db.ts`
-3. RPC is used directly only for: Anvil control actions, live balance reads, address classification, ABI endpoint polling, and on-demand `debug_traceTransaction`
+3. RPC is used directly only for: Anvil control actions, live balance reads, address classification, ABI endpoint polling, on-demand `debug_traceTransaction`, fork detection (`anvil_nodeInfo`), and on-demand pre-fork block fetches
 
 ### Key modules
 
 - `src/hooks/use-explorer.tsx` — `ExplorerProvider` context wrapping the entire app. Manages polling, status, settings, and exposes actions to all pages.
 - `src/lib/db.ts` — IndexedDB schema (blocks, transactions, receipts, logs, abis, labels, meta stores) and query helpers
-- `src/lib/sync.ts` — Indexing pipeline, rewind/reorg detection after snapshot/revert, data pruning
-- `src/lib/rpc.ts` — viem client helpers plus Anvil-specific and debug RPC methods
+- `src/lib/sync.ts` — Indexing pipeline, rewind/reorg detection after snapshot/revert, data pruning. Respects fork block and user-configured start block as the indexing floor.
+- `src/lib/rpc.ts` — viem client helpers plus Anvil-specific and debug RPC methods. `getForkConfig()` calls `anvil_nodeInfo` to detect forked chains.
 - `src/lib/decode.ts` — ABI parsing (accepts raw JSON arrays or Forge artifacts) and calldata/log/error decode
 - `src/lib/token-effects.ts` — ERC-20 balance change derivation from Transfer logs with before/after reads
 - `src/lib/failure.ts` — Reverted transaction replay and error decoding

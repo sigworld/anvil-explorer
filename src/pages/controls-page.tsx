@@ -25,7 +25,7 @@ export function ControlsPage(_: RouteProps) {
 
   return (
     <>
-      <PageSection title="Reset Explorer Data" description="Clear IndexedDB stores and restart indexing from block 0">
+      <PageSection title="Reset Explorer Data" description="Clear IndexedDB stores and restart indexing from the beginning">
         <button
           class="danger-button"
           onClick={() =>

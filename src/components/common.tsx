@@ -14,6 +14,15 @@ import { useAsyncResource } from '../hooks/use-async-resource.ts'
 import { useExplorer } from '../hooks/use-explorer.tsx'
 import type { AddressKind, DecodedEvent } from '../lib/types.ts'
 
+function truncateForkUrl(url: string, maxLength = 28): string {
+  try {
+    const host = new URL(url).hostname
+    return host.length > maxLength ? host.slice(0, maxLength - 1) + '\u2026' : host
+  } catch {
+    return url.length > maxLength ? url.slice(0, maxLength - 1) + '\u2026' : url
+  }
+}
+
 const LOCATION_CHANGE_EVENT = 'codex-location-change'
 
 function notifyLocationChange() {
@@ -161,9 +170,10 @@ export function CopyButton(props: { value: string; label: string }) {
 }
 
 export function AppShell(props: { children: ComponentChildren }) {
-  const { actions, chainMeta, error, rpcUrl, setRpcUrl, stats, status, statusMessage } = useExplorer()
+  const { actions, chainMeta, error, rpcUrl, setRpcUrl, startBlock, setStartBlock, stats, status, statusMessage } = useExplorer()
   const [pathname, setPathname] = useState(() => window.location.pathname)
   const [rpcDraft, setRpcDraft] = useState(rpcUrl)
+  const [startBlockDraft, setStartBlockDraft] = useState(startBlock !== null ? String(startBlock) : '')
   const [searchValue, setSearchValue] = useState('')
   const [searchError, setSearchError] = useState<string | null>(null)
   const [themePreference, setThemePreference] = useState<ThemePreference>(() => getStoredThemePreference())
@@ -230,6 +240,21 @@ export function AppShell(props: { children: ComponentChildren }) {
     event.preventDefault()
     setRpcUrl(rpcDraft.trim())
     actions.reconnect()
+  }
+
+  function handleStartBlockSubmit(event: Event) {
+    event.preventDefault()
+    const trimmed = startBlockDraft.trim()
+    if (trimmed === '') {
+      setStartBlock(null)
+      actions.resetData()
+      return
+    }
+    const parsed = Number.parseInt(trimmed, 10)
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      setStartBlock(parsed)
+      actions.resetData()
+    }
   }
 
   const navItems: Array<{
@@ -308,12 +333,26 @@ export function AppShell(props: { children: ComponentChildren }) {
               <div class="sidebar-status-table" role="table" aria-label="Chain and indexed state">
                 <div class="sidebar-status-row" role="row">
                   <span class="sidebar-status-label" role="rowheader">Network</span>
-                  <strong role="cell">{chainMeta ? 'Anvil' : 'Unavailable'}</strong>
+                  <strong role="cell">{chainMeta ? (chainMeta.forkConfig ? 'Anvil (Fork)' : 'Anvil') : 'Unavailable'}</strong>
                 </div>
                 <div class="sidebar-status-row" role="row">
                   <span class="sidebar-status-label" role="rowheader">Chain ID</span>
                   <strong role="cell">{chainMeta ? String(chainMeta.chainId) : 'n/a'}</strong>
                 </div>
+                {chainMeta?.forkConfig && (
+                  <>
+                    <div class="sidebar-status-row" role="row">
+                      <span class="sidebar-status-label" role="rowheader">Fork Block</span>
+                      <strong role="cell">{formatNumber(chainMeta.forkConfig.forkBlockNumber)}</strong>
+                    </div>
+                    <div class="sidebar-status-row" role="row">
+                      <span class="sidebar-status-label" role="rowheader">Fork Origin</span>
+                      <strong role="cell" title={chainMeta.forkConfig.forkUrl}>
+                        {truncateForkUrl(chainMeta.forkConfig.forkUrl)}
+                      </strong>
+                    </div>
+                  </>
+                )}
                 <div class="sidebar-status-row" role="row">
                   <span class="sidebar-status-label" role="rowheader">Head</span>
                   <strong role="cell">{chainMeta ? formatNumber(chainMeta.latestBlockNumber) : 'n/a'}</strong>
@@ -366,6 +405,19 @@ export function AppShell(props: { children: ComponentChildren }) {
               />
             </label>
             <button type="submit">Reconnect</button>
+          </form>
+          <form class="sidebar-endpoint-form" onSubmit={handleStartBlockSubmit}>
+            <label>
+              <span class="field-label">Start Block</span>
+              <input
+                value={startBlockDraft}
+                onInput={(event) => setStartBlockDraft(event.currentTarget.value)}
+                placeholder={chainMeta?.forkConfig ? String(chainMeta.forkConfig.forkBlockNumber) : '0'}
+                type="number"
+                min="0"
+              />
+            </label>
+            <button type="submit">Apply</button>
           </form>
         </section>
       </aside>

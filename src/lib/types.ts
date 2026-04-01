@@ -137,6 +137,11 @@ export type MetaRecord = {
   value: unknown
 }
 
+export type ForkConfig = {
+  forkUrl: string
+  forkBlockNumber: number
+}
+
 export type ChainMeta = {
   chainId: number
   clientVersion: string
@@ -145,6 +150,7 @@ export type ChainMeta = {
   latestIndexedHash: Hex | null
   rpcUrl: string
   syncedAt: number
+  forkConfig?: ForkConfig | null
 }
 
 export type ExplorerStats = {

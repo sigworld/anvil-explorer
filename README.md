@@ -11,7 +11,7 @@ https://github.com/user-attachments/assets/a7470f21-a84d-429c-8d2f-6971a6e887c4
 Requirements: Node.js 20+ and a running local Anvil node.
 
 ```bash
-anvil                              # start anvil
+anvil                              # start anvil (or anvil --fork-url <rpc>)
 npm install && npm run dev -- --host 127.0.0.1  # start explorer at http://127.0.0.1:7777
 ```
 
@@ -25,6 +25,17 @@ The app connects to `http://127.0.0.1:8545` by default. You can change the RPC U
 - Inspect ERC-20 balances, token holders, and per-transaction balance changes
 - On-demand `debug_traceTransaction` call trees
 - Anvil controls: mine blocks, set balances, snapshot / revert
+- **Forked chain support** — auto-detects `anvil --fork-url` via `anvil_nodeInfo`, indexes only post-fork blocks, and fetches pre-fork blocks on demand from the origin chain
+
+## Forked Chains
+
+When connected to a forked Anvil instance, the explorer automatically:
+
+- Detects the fork origin and block number (shown in the sidebar)
+- Indexes only blocks created after the fork — no attempt to sync millions of historical blocks
+- Fetches pre-fork blocks live from the origin RPC when you navigate to them (marked with a banner)
+
+You can also set a custom **Start Block** in the sidebar to narrow the indexing window further, even on non-forked chains.
 
 ## Working with ABIs
 

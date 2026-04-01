@@ -49,7 +49,7 @@ function normalizeAddress(value: Hex | null | undefined) {
   return value ? getAddress(value) : null
 }
 
-function normalizeBlock(block: RpcBlock): BlockRecord {
+export function normalizeBlock(block: RpcBlock): BlockRecord {
   return {
     number: Number(block.number),
     hash: block.hash as Hex,
@@ -64,7 +64,7 @@ function normalizeBlock(block: RpcBlock): BlockRecord {
   }
 }
 
-function normalizeTransaction(transaction: RpcTransaction): TransactionRecord {
+export function normalizeTransaction(transaction: RpcTransaction): TransactionRecord {
   return {
     hash: transaction.hash,
     blockHash: transaction.blockHash,
@@ -115,7 +115,7 @@ function normalizeLogs(receipt: RpcReceipt): LogRecord[] {
   }))
 }
 
-async function recoverFromRewind(client: AnvilClient, latestBlockNumber: number) {
+async function recoverFromRewind(client: AnvilClient, latestBlockNumber: number, floorBlock: number = 0) {
   const chainMeta = await getChainMeta()
 
   if (!chainMeta) {
@@ -145,7 +145,7 @@ async function recoverFromRewind(client: AnvilClient, latestBlockNumber: number)
     localHeadNumber,
   })
 
-  for (let blockNumber = localHeadNumber; blockNumber >= 0; blockNumber -= 1) {
+  for (let blockNumber = localHeadNumber; blockNumber >= floorBlock; blockNumber -= 1) {
     const [localBlock, remoteBlock] = await Promise.all([
       getBlock(blockNumber),
       getBlockByNumber(client, blockNumber),
@@ -157,7 +157,7 @@ async function recoverFromRewind(client: AnvilClient, latestBlockNumber: number)
     }
   }
 
-  await pruneFromBlock(0)
+  await pruneFromBlock(floorBlock)
   return true
 }
 
@@ -184,15 +184,17 @@ async function persistBlock(client: AnvilClient, rpcBlock: RpcBlock) {
 export async function syncChain(
   client: AnvilClient,
   rpcUrl: string,
+  userStartBlock?: number | null,
   onProgress?: (progress: SyncProgress) => void,
 ): Promise<SyncResult> {
   onProgress?.({ phase: 'connecting', message: 'Connecting to Anvil' })
 
   const info = await getChainInfo(client)
-  const changedByRewind = await recoverFromRewind(client, info.latestBlockNumber)
+  const forkBlock = Math.max(info.forkConfig?.forkBlockNumber ?? 0, userStartBlock ?? 0)
+  const changedByRewind = await recoverFromRewind(client, info.latestBlockNumber, forkBlock)
   const previous = await getChainMeta()
   const latestLocalBlock = (await getLatestBlocks(1))[0]
-  const startBlock = Math.max(0, latestLocalBlock?.number ?? -1) + 1
+  const startBlock = Math.max(forkBlock, latestLocalBlock?.number ?? (forkBlock - 1)) + 1
 
   let latestIndexedBlock = startBlock - 1
   let latestIndexedHash: Hex | null = latestLocalBlock?.hash ?? previous?.latestIndexedHash ?? null
@@ -212,7 +214,7 @@ export async function syncChain(
       changed = true
     }
   } else {
-    latestIndexedBlock = latestLocalBlock?.number ?? -1
+    latestIndexedBlock = latestLocalBlock?.number ?? (forkBlock - 1)
     latestIndexedHash = latestLocalBlock?.hash ?? null
   }
 
@@ -224,6 +226,7 @@ export async function syncChain(
     latestIndexedHash,
     rpcUrl,
     syncedAt: Date.now(),
+    forkConfig: info.forkConfig ?? null,
   }
 
   await putChainMeta(meta)

@@ -1683,18 +1683,27 @@ p {
   width: 12rem;
 }
 
+.summary-table-transactions-wide table {
+  min-width: 80rem;
+}
+
 .summary-table-transactions-wide th:nth-child(5),
 .summary-table-transactions-wide td:nth-child(5) {
-  width: 13rem;
+  width: 12rem;
 }
 
 .summary-table-transactions-wide th:nth-child(6),
 .summary-table-transactions-wide td:nth-child(6) {
-  width: 8rem;
+  width: 14rem;
 }
 
 .summary-table-transactions-wide th:nth-child(7),
 .summary-table-transactions-wide td:nth-child(7) {
+  width: 8rem;
+}
+
+.summary-table-transactions-wide th:nth-child(8),
+.summary-table-transactions-wide td:nth-child(8) {
   width: 8rem;
 }
 
