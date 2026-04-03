@@ -153,6 +153,14 @@ export type ChainMeta = {
   forkConfig?: ForkConfig | null
 }
 
+export type ExplorerEndpoint = {
+  id: string
+  name: string
+  rpcUrl: string
+  startBlock: number | null
+  color: string
+}
+
 export type ExplorerStats = {
   blockCount: number
   transactionCount: number
@@ -320,4 +328,162 @@ export type TraceNode = {
   revertReason: string | null
   status: 'success' | 'reverted' | 'failed'
   calls: TraceNode[]
+}
+
+export type GeneratedSource = {
+  id: number
+  name: string
+  contents: string
+  language?: string | null
+}
+
+export type ByteRange = {
+  start: number
+  length: number
+}
+
+export type StorageLayoutEntry = {
+  label: string
+  slot: string
+  offset: number
+  type: string
+}
+
+export type StorageLayoutType = {
+  encoding: string
+  label: string
+  numberOfBytes: string
+  key?: string
+  value?: string
+  base?: string
+  members?: Array<{
+    label: string
+    slot: string
+    offset: number
+    type: string
+  }>
+}
+
+export type StorageLayout = {
+  storage: StorageLayoutEntry[]
+  types: Record<string, StorageLayoutType>
+}
+
+export type CodeImageRecord = {
+  id: string
+  contractName: string
+  sourcePath: string | null
+  kind: 'creation' | 'runtime'
+  artifactPath: string | null
+  buildInfoPath: string | null
+  bytecode: string
+  sourceMap: string
+  fileIndexMap: Record<number, string>
+  generatedSources: GeneratedSource[]
+  immutableRanges: ByteRange[]
+  libraryRanges: ByteRange[]
+  storageLayout?: StorageLayout | null
+  updatedAt: number
+}
+
+export type OpcodeEntry = {
+  pc: number
+  op: string
+  gas: number
+  gasCost: number
+  depth: number
+  stack: string[]
+  memory?: string[]
+  storage?: Record<string, string>
+  returnData?: string | null
+  address?: string
+}
+
+export type OpcodeTrace = {
+  totalGas: number
+  entries: OpcodeEntry[]
+}
+
+export type SourceLocation = {
+  fileIndex: number
+  start: number
+  length: number
+  jump: string
+}
+
+export type ResolvedSourceSpan = {
+  fileIndex: number
+  filePath: string
+  start: number
+  length: number
+  line: number
+  column: number
+  snippet: string
+}
+
+export type SourceAstNode = {
+  id?: number
+  nodeType: string
+  name?: string
+  src: string
+  [key: string]: unknown
+}
+
+export type SourceMapRecord = {
+  address: Hex
+  deployedBytecode: string
+  deployedSourceMap: string
+  fileIndexMap: Record<number, string>
+}
+
+export type SourceFileRecord = {
+  path: string
+  content: string
+  sourceId?: number
+  ast?: SourceAstNode | null
+}
+
+export type TraceFrame = {
+  id: string
+  path: string
+  depth: number
+  type: string
+  from: Hex | null
+  to: Hex | null
+  input: Hex
+  output: Hex | null
+  value: string | null
+  gas: string | null
+  gasUsed: string | null
+  codeAddress: Hex | null
+  contextAddress: Hex | null
+  functionName: string | null
+  signature: string | null
+  selector: string | null
+  args: Array<{ name: string; value: string }>
+  error: string | null
+  revertReason: string | null
+  status: 'success' | 'reverted' | 'failed'
+  startEntryIndex: number
+  endEntryIndex: number
+  parentId: string | null
+  imageId: string | null
+  imageMatch: 'creation-input' | 'runtime-code' | 'address-fallback' | 'none'
+  proxyContext: 'direct' | 'delegate' | 'callcode'
+  calls: TraceFrame[]
+}
+
+export type StepAstContext = {
+  contract: string | null
+  function: string | null
+  statement: string | null
+  narrowedSource: ResolvedSourceSpan | null
+  functionSource: ResolvedSourceSpan | null
+}
+
+export type TraceStepLocation = {
+  entryIndex: number
+  frameId: string
+  source: ResolvedSourceSpan | null
+  astContext: StepAstContext | null
 }

@@ -3,6 +3,7 @@ import { formatEtherString, formatNumber, formatTimestamp } from '../lib/format.
 import { createAnvilClient, getCode, getErc20TokenInfo } from '../lib/rpc.ts'
 import { useAsyncResource } from '../hooks/use-async-resource.ts'
 import { useExplorer } from '../hooks/use-explorer.tsx'
+import { usePageMeta } from '../hooks/use-page-meta.ts'
 import {
   AddressLink,
   BlockLink,
@@ -59,6 +60,7 @@ function renderTimestampWithBlock(timestamp: number | null, blockNumber: number 
 }
 
 export function ContractsPage(_: RouteProps) {
+  usePageMeta('Contracts', 'Browse deployed contracts on your local Anvil chain — deployer, bytecode size, interaction count, and ERC-20 detection.')
   const { refreshKey, rpcUrl } = useExplorer()
   const resource = useAsyncResource(
     async () => {

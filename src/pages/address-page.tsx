@@ -1,6 +1,6 @@
 import type { ComponentChildren } from 'preact'
 import { useEffect, useState } from 'preact/hooks'
-import { toFunctionSelector, type Abi, type AbiParameter } from 'viem'
+import { parseUnits, toFunctionSelector, type Abi, type AbiParameter } from 'viem'
 import { formatAbiItem, formatAbiParams } from 'viem/utils'
 import {
   getAccountInsight,
@@ -15,13 +15,22 @@ import {
   getTransactionsForAddress,
   upsertAbi,
   upsertAddressLabel,
+  upsertCodeImage,
+  upsertSourceFile,
 } from '../lib/db.ts'
 import { getDefaultAddressLabel } from '../lib/address-labels.ts'
 import { decodeLog, toAbiRecord } from '../lib/decode.ts'
+import {
+  type BytecodeMatchScanResult,
+  isDirectoryPickerSupported,
+  pickDirectory,
+  scanDirectoryForBytecodeMatch,
+} from '../lib/forge-import.ts'
 import { formatEtherString, formatTimestamp, formatUnitsString } from '../lib/format.ts'
 import {
   createAnvilClient,
   getAddressKind,
+  getCode,
   getErc20Balance,
   getErc20HolderBalance,
   getErc20TokenInfo,
@@ -31,6 +40,7 @@ import {
 import { buildTransactionSummaries } from '../lib/transaction-meta.ts'
 import { useAsyncResource } from '../hooks/use-async-resource.ts'
 import { useExplorer } from '../hooks/use-explorer.tsx'
+import { usePageMeta } from '../hooks/use-page-meta.ts'
 import type { TransactionSummary } from '../lib/types.ts'
 import { AccountInsightSection } from '../components/account-insight.tsx'
 import {
@@ -172,6 +182,7 @@ function getPublicContractFunctions(
 }
 
 export function AddressPage(props: RouteProps) {
+  usePageMeta(props.address ? `Address ${props.address.slice(0, 10)}...` : 'Address', 'Inspect an address — balance, transactions, event logs, token holdings, contract ABI, and interaction graph.')
   const { actions, refreshKey, rpcUrl } = useExplorer()
   const normalizedAddress = props.address ? normalizeAddress(props.address) : null
   const [localVersion, setLocalVersion] = useState(0)
@@ -185,6 +196,14 @@ export function AddressPage(props: RouteProps) {
   const [publicFunctionSortKey, setPublicFunctionSortKey] = useState<PublicFunctionSortKey>('callCount')
   const [publicFunctionsExpanded, setPublicFunctionsExpanded] = useState(false)
   const [abiCopied, setAbiCopied] = useState(false)
+  const [mintRecipient, setMintRecipient] = useState('')
+  const [mintAmount, setMintAmount] = useState('1000')
+  const [mintResult, setMintResult] = useState<string | null>(null)
+  const [mintError, setMintError] = useState<string | null>(null)
+  const [forgeDetecting, setForgeDetecting] = useState(false)
+  const [forgeScanResult, setForgeScanResult] = useState<BytecodeMatchScanResult | null>(null)
+  const [forgeSelectedIndex, setForgeSelectedIndex] = useState(0)
+  const [forgeError, setForgeError] = useState<string | null>(null)
 
   async function handleAbiCopy() {
     if (!resource.data?.abi?.source || !navigator.clipboard) {
@@ -375,6 +394,84 @@ export function AddressPage(props: RouteProps) {
     }
   }
 
+  async function handleForgeDetect() {
+    if (!normalizedAddress) return
+    setForgeError(null)
+    setForgeScanResult(null)
+    setForgeSelectedIndex(0)
+    setForgeDetecting(true)
+
+    try {
+      const client = createAnvilClient(rpcUrl)
+      const bytecode = await getCode(client, normalizedAddress)
+      if (!bytecode || bytecode === '0x') {
+        setForgeError('No bytecode found at this address')
+        setForgeDetecting(false)
+        return
+      }
+
+      const dirHandle = await pickDirectory()
+      const result = await scanDirectoryForBytecodeMatch(dirHandle, bytecode)
+
+      if (result.candidates.length === 0) {
+        setForgeError('No matching contracts found. Make sure you select the Forge project root (or out/ directory) after running forge build.')
+        setForgeDetecting(false)
+        return
+      }
+
+      setForgeScanResult(result)
+    } catch (caughtError: unknown) {
+      if (caughtError instanceof DOMException && caughtError.name === 'AbortError') {
+        // User cancelled the directory picker
+      } else {
+        setForgeError(caughtError instanceof Error ? caughtError.message : 'Failed to scan directory')
+      }
+    }
+
+    setForgeDetecting(false)
+  }
+
+  async function handleForgeConfirm() {
+    if (!forgeScanResult || !normalizedAddress) return
+    const candidate = forgeScanResult.candidates[forgeSelectedIndex]
+    if (!candidate) return
+
+    try {
+      await upsertAbi(toAbiRecord(normalizedAddress, candidate.source))
+      await upsertAddressLabel(normalizedAddress, candidate.name)
+
+      // Save code images for the selected candidate
+      const codeImages = forgeScanResult.codeImagesByArtifact.get(candidate.artifactPath) ?? []
+      for (const image of codeImages) {
+        await upsertCodeImage(image)
+      }
+
+      // Save all source files (source maps may reference any file in the project)
+      for (const file of forgeScanResult.sourceFiles) {
+        await upsertSourceFile(file)
+      }
+
+      setForgeScanResult(null)
+      const parts: string[] = []
+      if (candidate.bytecodeMatch) {
+        parts.push('exact bytecode match')
+      } else {
+        parts.push(`${candidate.matchedSelectors}/${candidate.onChainSelectors} selectors`)
+      }
+      if (codeImages.length > 0) {
+        parts.push(`${codeImages.length} code image${codeImages.length === 1 ? '' : 's'}`)
+      }
+      if (forgeScanResult.sourceFiles.length > 0) {
+        parts.push(`${forgeScanResult.sourceFiles.length} source file${forgeScanResult.sourceFiles.length === 1 ? '' : 's'}`)
+      }
+      setAbiResult(`Saved ABI: ${candidate.name} (${parts.join(', ')})`)
+      setLocalVersion((current) => current + 1)
+      actions.refresh()
+    } catch (caughtError: unknown) {
+      setForgeError(caughtError instanceof Error ? caughtError.message : 'Failed to save ABI')
+    }
+  }
+
   function renderWalletLabelValue() {
     if (!resource.data) {
       return 'n/a'
@@ -555,7 +652,7 @@ export function AddressPage(props: RouteProps) {
                     <BlockLink number={log.blockNumber} />
                   </td>
                   <td>{log.txHash ? <TxLink hash={log.txHash} /> : 'n/a'}</td>
-                  <td>
+                  <td class={decoded ? 'log-topic-decoded' : undefined}>
                     <LogDecodePopup decoded={decoded} trigger={<div class="log-data-cell mono">{topicsText}</div>} />
                   </td>
                   <td>
@@ -690,23 +787,59 @@ export function AddressPage(props: RouteProps) {
               </PageSection>
 
               {resource.data.tokenInfo && (
-                <PageSection title="Token Metadata" description="Live ERC-20 metadata read from the contract">
-                  <KeyValueGrid
-                    items={[
-                      { label: 'Name', value: resource.data.tokenInfo.name ?? 'n/a' },
-                      { label: 'Symbol', value: resource.data.tokenInfo.symbol ?? 'n/a' },
-                      { label: 'Decimals', value: resource.data.tokenInfo.decimals },
-                      {
-                        label: 'Total Supply',
-                        value: formatUnitsString(
-                          resource.data.tokenInfo.totalSupply,
-                          resource.data.tokenInfo.decimals,
-                          resource.data.tokenInfo.symbol ?? undefined,
-                        ),
-                      },
-                    ]}
-                  />
-                </PageSection>
+                <>
+                  <PageSection title="Token Metadata" description="Live ERC-20 metadata read from the contract">
+                    <KeyValueGrid
+                      items={[
+                        { label: 'Name', value: resource.data.tokenInfo.name ?? 'n/a' },
+                        { label: 'Symbol', value: resource.data.tokenInfo.symbol ?? 'n/a' },
+                        { label: 'Decimals', value: resource.data.tokenInfo.decimals },
+                        {
+                          label: 'Total Supply',
+                          value: formatUnitsString(
+                            resource.data.tokenInfo.totalSupply,
+                            resource.data.tokenInfo.decimals,
+                            resource.data.tokenInfo.symbol ?? undefined,
+                          ),
+                        },
+                      ]}
+                    />
+                  </PageSection>
+
+                  <PageSection title="Mint Tokens" description={`Deal ${resource.data.tokenInfo.symbol ?? 'tokens'} via storage slot manipulation`}>
+                    {mintResult && <p class="success-copy">{mintResult}</p>}
+                    {mintError && <ErrorState message={mintError} />}
+                    <div class="stack-form">
+                      <input
+                        value={mintRecipient}
+                        onInput={(event) => setMintRecipient(event.currentTarget.value)}
+                        placeholder="Recipient address"
+                      />
+                      <input
+                        value={mintAmount}
+                        onInput={(event) => setMintAmount(event.currentTarget.value)}
+                        placeholder={`Amount (${resource.data.tokenInfo.symbol ?? 'tokens'})`}
+                      />
+                      <button
+                        onClick={async () => {
+                          setMintError(null)
+                          setMintResult(null)
+                          try {
+                            const decimals = resource.data!.tokenInfo!.decimals
+                            const amount = parseUnits(mintAmount, decimals)
+                            await actions.dealErc20(normalizedAddress!, mintRecipient, amount)
+                            const label = resource.data!.tokenInfo!.symbol ?? 'tokens'
+                            setMintResult(`Minted ${mintAmount} ${label} to ${mintRecipient}`)
+                          } catch (caughtError: unknown) {
+                            setMintError(caughtError instanceof Error ? caughtError.message : 'Mint failed')
+                          }
+                        }}
+                      >
+                        Mint
+                      </button>
+                    </div>
+                  </PageSection>
+                </>
               )}
 
               <PageSection title="Public Functions" description="Callable methods derived from the attached ABI">
@@ -780,6 +913,11 @@ export function AddressPage(props: RouteProps) {
               <PageSection
                 title="Contract ABI"
                 description="Attach an ABI here to decode contract calls, events, and custom errors for this contract"
+                actions={isDirectoryPickerSupported() ? (
+                  <button type="button" class="section-header-toggle" onClick={handleForgeDetect} disabled={forgeDetecting}>
+                    {forgeDetecting ? 'Scanning...' : 'Detect from Forge'}
+                  </button>
+                ) : undefined}
               >
                 <div class="contract-abi-summary-row">
                   <KeyValueGrid
@@ -832,20 +970,86 @@ export function AddressPage(props: RouteProps) {
                         </div>
                       </div>
                     ) : (
-                      <form class="stack-form" onSubmit={handleAbiSubmit}>
-                        <label>
-                          <span class="field-label">ABI JSON</span>
-                          <textarea
-                            rows={14}
-                            value={abiSource}
-                            onInput={(event) => setAbiSource(event.currentTarget.value)}
-                            placeholder='[{"type":"function","name":"transfer",...}] or a Forge artifact JSON object'
-                          />
-                        </label>
-                        <div class="button-row button-row-inline">
-                          <button type="submit">Save ABI</button>
-                        </div>
-                      </form>
+                      <>
+                        {forgeScanResult ? (
+                          <div class="stack-form">
+                            <span class="field-label">
+                              {forgeScanResult.candidates.length} matching contract{forgeScanResult.candidates.length === 1 ? '' : 's'} found
+                            </span>
+                            <div class="forge-match-list">
+                              {forgeScanResult.candidates.map((candidate, index) => (
+                                <label
+                                  key={candidate.artifactPath}
+                                  class={`forge-match-item${index === forgeSelectedIndex ? ' forge-match-item-selected' : ''}`}
+                                >
+                                  <input
+                                    type="radio"
+                                    name="forge-match"
+                                    checked={index === forgeSelectedIndex}
+                                    onChange={() => setForgeSelectedIndex(index)}
+                                  />
+                                  <div class="forge-match-info">
+                                    <span class="forge-match-name">{candidate.name}</span>
+                                    {candidate.sourcePath && (
+                                      <span class="forge-match-path muted">{candidate.sourcePath}</span>
+                                    )}
+                                  </div>
+                                  <div class="forge-match-badges">
+                                    {candidate.bytecodeMatch && (
+                                      <span class="forge-match-badge forge-match-badge-exact">exact</span>
+                                    )}
+                                    {candidate.hasSourceImages && (
+                                      <span class="forge-match-badge forge-match-badge-sources">sources</span>
+                                    )}
+                                    <span class={`forge-match-score${candidate.matchedSelectors === candidate.totalAbiSelectors ? ' forge-match-score-high' : ''}`}>
+                                      {candidate.matchedSelectors}/{candidate.onChainSelectors} selectors
+                                    </span>
+                                  </div>
+                                </label>
+                              ))}
+                            </div>
+                            {(() => {
+                              const selected = forgeScanResult.candidates[forgeSelectedIndex]
+                              return selected && selected.hasSourceImages && !selected.bytecodeMatch && selected.compiledBytes > 0 ? (
+                                <div class="forge-mismatch-warning">
+                                  <p>
+                                    <strong>Bytecode mismatch</strong> — debug tracing requires bytecodes to match exactly.
+                                    Your compiled bytecode is {selected.compiledBytes.toLocaleString()} bytes but on-chain
+                                    is {selected.onChainBytes.toLocaleString()} bytes.
+                                  </p>
+                                  <p>
+                                    This usually means different <code>optimizer_runs</code> in <code>foundry.toml</code>.
+                                    Match the original deployment settings and run <code>forge build --force</code>, then
+                                    detect again. The ABI will still be applied for call/event decoding.
+                                  </p>
+                                </div>
+                              ) : null
+                            })()}
+                            <div class="button-row button-row-inline">
+                              <button type="button" onClick={handleForgeConfirm}>
+                                Apply ABI
+                              </button>
+                              <button type="button" onClick={() => setForgeScanResult(null)}>
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <form class="stack-form" onSubmit={handleAbiSubmit}>
+                            <label>
+                              <span class="field-label">ABI JSON</span>
+                              <textarea
+                                rows={14}
+                                value={abiSource}
+                                onInput={(event) => setAbiSource(event.currentTarget.value)}
+                                placeholder='[{"type":"function","name":"transfer",...}] or a Forge artifact JSON object'
+                              />
+                            </label>
+                            <button type="submit">Save ABI</button>
+                          </form>
+                        )}
+                        {forgeError && <ErrorState message={forgeError} />}
+                      </>
                     )}
                     <FoundryAbiTips />
                   </div>

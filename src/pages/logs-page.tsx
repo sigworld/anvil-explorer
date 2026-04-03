@@ -4,10 +4,12 @@ import { formatTimestamp } from '../lib/format.ts'
 import { useAsyncResource } from '../hooks/use-async-resource.ts'
 import { useExplorer } from '../hooks/use-explorer.tsx'
 import { AddressLink, BlockLink, EmptyState, ErrorState, LoadingState, LogDecodePopup, PageSection, SummaryTable, TxLink } from '../components/common.tsx'
+import { usePageMeta } from '../hooks/use-page-meta.ts'
 
 type RouteProps = { path?: string }
 
 export function LogsPage(_: RouteProps) {
+  usePageMeta('Logs', 'Browse emitted event logs from your local Anvil chain with ABI-decoded topics and data.')
   const { refreshKey } = useExplorer()
   const logs = useAsyncResource(async () => {
     const records = await getRecentLogs(100)
@@ -66,7 +68,7 @@ export function LogsPage(_: RouteProps) {
                 <td>
                   <AddressLink address={log.address} />
                 </td>
-                <td>
+                <td class={log.decoded ? 'log-topic-decoded' : undefined}>
                   <LogDecodePopup decoded={log.decoded} trigger={<div class="log-data-cell mono">{topicsText}</div>} />
                 </td>
                 <td>

@@ -3,10 +3,12 @@ import { formatTimestamp, shortenHex } from '../lib/format.ts'
 import { useAsyncResource } from '../hooks/use-async-resource.ts'
 import { useExplorer } from '../hooks/use-explorer.tsx'
 import { AddressLink, BlockLink, EmptyState, ErrorState, LoadingState, PageSection, SummaryTable } from '../components/common.tsx'
+import { usePageMeta } from '../hooks/use-page-meta.ts'
 
 type RouteProps = { path?: string }
 
 export function BlocksPage(_: RouteProps) {
+  usePageMeta('Blocks', 'Browse indexed blocks from your local Anvil chain with timestamps, transaction counts, and gas usage.')
   const { refreshKey } = useExplorer()
   const blocks = useAsyncResource(() => getLatestBlocks(50), [refreshKey], [])
 

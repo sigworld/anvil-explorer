@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .anvil-explorer/
+.team
 .DS_Store
 playwright-report/
 test-results/

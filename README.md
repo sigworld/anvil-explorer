@@ -23,8 +23,8 @@ The app connects to `http://127.0.0.1:8545` by default. You can change the RPC U
 - Search by block number, block hash, transaction hash, or address
 - Decode calldata, receipt logs, and custom errors with attached ABIs (raw JSON or Forge artifacts)
 - Inspect ERC-20 balances, token holders, and per-transaction balance changes
-- On-demand `debug_traceTransaction` call trees
-- Anvil controls: mine blocks, set balances, snapshot / revert
+- On-demand `debug_traceTransaction` call trees with opcode-level execution trace and gas cost breakdown
+- Anvil controls: mine blocks, mint native ETH, mint ERC-20 tokens, snapshot / revert
 - **Forked chain support** — auto-detects `anvil --fork-url` via `anvil_nodeInfo`, indexes only post-fork blocks, and fetches pre-fork blocks on demand from the origin chain
 
 ## Forked Chains
@@ -36,6 +36,27 @@ When connected to a forked Anvil instance, the explorer automatically:
 - Fetches pre-fork blocks live from the origin RPC when you navigate to them (marked with a banner)
 
 You can also set a custom **Start Block** in the sidebar to narrow the indexing window further, even on non-forked chains.
+
+## Token Minting
+
+### Native ETH
+
+From the **Config** page, use **Mint Native Token** to add ETH to any address. This is additive — it reads the current balance and adds the specified amount on top (unlike `anvil_setBalance` which overwrites).
+
+### ERC-20 Tokens
+
+Use **Mint ERC20 Token** on the **Config** page to deal arbitrary ERC-20 tokens to any address. Enter the token contract address, click **Lookup** to auto-detect decimals and symbol, then specify the recipient and amount.
+
+This also works inline from the **Token Metadata** sidebar on any ERC-20 contract's address page — useful when you're already inspecting a token.
+
+Under the hood, the explorer brute-forces the `balanceOf` storage slot (Solidity and Vyper mapping layouts, slots 0–19) and writes via `anvil_setStorageAt`. Works with standard token implementations; exotic storage layouts may not be supported.
+
+## Execution Tracing
+
+On any transaction's detail page, the **Trace** tab offers two views:
+
+- **Call Tree** — high-level call graph from `debug_traceTransaction` with `callTracer`, showing nested contract calls with gas usage, decoded function names, and arguments
+- **Opcode Trace** — step-by-step EVM execution showing every opcode with program counter, gas cost, call depth, and stack. Includes a gas summary with the top 5 most expensive opcodes. Click any row to expand the full stack and storage changes. Results are paginated for large traces.
 
 ## Working with ABIs
 

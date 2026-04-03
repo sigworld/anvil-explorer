@@ -5,6 +5,8 @@ import { normalizeBlock, normalizeTransaction, persistBlock } from '../lib/sync.
 import { buildTransactionSummaries } from '../lib/transaction-meta.ts'
 import { useAsyncResource } from '../hooks/use-async-resource.ts'
 import { useExplorer } from '../hooks/use-explorer.tsx'
+import { usePageMeta } from '../hooks/use-page-meta.ts'
+import { route } from 'preact-router'
 import {
   AddressLink,
   EmptyState,
@@ -26,6 +28,7 @@ type RouteProps = {
 }
 
 export function BlockPage(props: RouteProps) {
+  usePageMeta(props.number ? `Block ${props.number}` : 'Block', 'Inspect a single Anvil block — header fields, gas stats, and every transaction in the block.')
   const { actions, refreshKey, rpcUrl, chainMeta } = useExplorer()
   const blockNumber = parseNumberInput(props.number ?? '')
   const forkBlockNumber = chainMeta?.forkConfig?.forkBlockNumber ?? null
@@ -79,20 +82,36 @@ export function BlockPage(props: RouteProps) {
     null,
   )
 
+  const upperBound = chainMeta?.latestBlockNumber ?? null
+  const hasPrev = blockNumber !== null && blockNumber > 0
+  const hasNext = blockNumber !== null && upperBound !== null && blockNumber < upperBound
+
+  const displayedBlock = resource.data?.block
+  const isStale = displayedBlock && blockNumber !== null && displayedBlock.number !== blockNumber
+  const showLoading = resource.loading || isStale
+
+  const title = (
+    <span class="block-title-row">
+      <button type="button" class="block-nav-btn" disabled={!hasPrev} onClick={() => hasPrev && route(`/blocks/${blockNumber! - 1}`)}>←</button>
+      <button type="button" class="block-nav-btn" disabled={!hasNext} onClick={() => hasNext && route(`/blocks/${blockNumber! + 1}`)}>→</button>
+      <span>{blockNumber === null ? 'Block' : `Block #${formatNumber(blockNumber)}`}</span>
+    </span>
+  )
+
   return (
     <PageSection
-      title={blockNumber === null ? 'Block' : `Block #${formatNumber(blockNumber)}`}
+      title={title}
       description="Stored block header plus indexed transactions"
     >
-      {resource.loading && <LoadingState label="Loading block" />}
+      {showLoading && <LoadingState label={`Loading block ${blockNumber !== null ? '#' + formatNumber(blockNumber) : ''}…`} />}
       {resource.error && <ErrorState message={resource.error} />}
-      {!resource.loading && blockNumber === null && (
+      {!showLoading && blockNumber === null && (
         <EmptyState title="Invalid block number" body="Use a decimal block number in the route or search box." />
       )}
-      {!resource.loading && resource.data && !resource.data.block && (
+      {!showLoading && resource.data && !resource.data.block && (
         <EmptyState title="Block not found" body="Could not find this block in IndexedDB or via RPC." />
       )}
-      {resource.data?.block && (
+      {!isStale && resource.data?.block && (
         <>
           <KeyValueGrid
             items={[

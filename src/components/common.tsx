@@ -170,10 +170,8 @@ export function CopyButton(props: { value: string; label: string }) {
 }
 
 export function AppShell(props: { children: ComponentChildren }) {
-  const { actions, chainMeta, error, rpcUrl, setRpcUrl, startBlock, setStartBlock, stats, status, statusMessage } = useExplorer()
+  const { activeEndpointId, chainMeta, endpoints, error, setActiveEndpointId, stats, status, statusMessage } = useExplorer()
   const [pathname, setPathname] = useState(() => window.location.pathname)
-  const [rpcDraft, setRpcDraft] = useState(rpcUrl)
-  const [startBlockDraft, setStartBlockDraft] = useState(startBlock !== null ? String(startBlock) : '')
   const [searchValue, setSearchValue] = useState('')
   const [searchError, setSearchError] = useState<string | null>(null)
   const [themePreference, setThemePreference] = useState<ThemePreference>(() => getStoredThemePreference())
@@ -181,10 +179,6 @@ export function AppShell(props: { children: ComponentChildren }) {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(
     () => window.localStorage.getItem('sidebar-collapsed') === '1',
   )
-
-  useEffect(() => {
-    setRpcDraft(rpcUrl)
-  }, [rpcUrl])
 
   useEffect(() => {
     window.localStorage.setItem(THEME_STORAGE_KEY, themePreference)
@@ -234,27 +228,6 @@ export function AppShell(props: { children: ComponentChildren }) {
 
     route(`/address/${target.address}`)
     notifyLocationChange()
-  }
-
-  function handleRpcSubmit(event: Event) {
-    event.preventDefault()
-    setRpcUrl(rpcDraft.trim())
-    actions.reconnect()
-  }
-
-  function handleStartBlockSubmit(event: Event) {
-    event.preventDefault()
-    const trimmed = startBlockDraft.trim()
-    if (trimmed === '') {
-      setStartBlock(null)
-      actions.resetData()
-      return
-    }
-    const parsed = Number.parseInt(trimmed, 10)
-    if (Number.isFinite(parsed) && parsed >= 0) {
-      setStartBlock(parsed)
-      actions.resetData()
-    }
   }
 
   const navItems: Array<{
@@ -393,33 +366,6 @@ export function AppShell(props: { children: ComponentChildren }) {
           ))}
         </nav>
 
-        <section class="sidebar-card sidebar-summary">
-          <p class="eyebrow">Endpoint</p>
-          <form class="sidebar-endpoint-form" onSubmit={handleRpcSubmit}>
-            <label>
-              <span class="field-label">RPC URL</span>
-              <input
-                value={rpcDraft}
-                onInput={(event) => setRpcDraft(event.currentTarget.value)}
-                placeholder="http://127.0.0.1:8545"
-              />
-            </label>
-            <button type="submit">Reconnect</button>
-          </form>
-          <form class="sidebar-endpoint-form" onSubmit={handleStartBlockSubmit}>
-            <label>
-              <span class="field-label">Start Block</span>
-              <input
-                value={startBlockDraft}
-                onInput={(event) => setStartBlockDraft(event.currentTarget.value)}
-                placeholder={chainMeta?.forkConfig ? String(chainMeta.forkConfig.forkBlockNumber) : '0'}
-                type="number"
-                min="0"
-              />
-            </label>
-            <button type="submit">Apply</button>
-          </form>
-        </section>
       </aside>
 
       <div class="app-main">
@@ -441,6 +387,29 @@ export function AppShell(props: { children: ComponentChildren }) {
               <path d="M13 4 8.5 8l4.5 4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </button>
+          <span
+            class="chain-switch"
+            style={{
+              background: endpoints.find((ep) => ep.id === activeEndpointId)?.color ?? '',
+            }}
+          >
+            <select
+              value={activeEndpointId}
+              onChange={(event) => {
+                setActiveEndpointId(event.currentTarget.value)
+                route('/')
+                notifyLocationChange()
+              }}
+              aria-label="Switch chain endpoint"
+            >
+              {endpoints.map((ep) => (
+                <option key={ep.id} value={ep.id}>{ep.name}</option>
+              ))}
+            </select>
+            <svg class="chain-switch-icon" aria-hidden="true" viewBox="0 0 16 16">
+              <path d="m4.5 6.5 3.5 3 3.5-3" />
+            </svg>
+          </span>
           <form class="toolbar-form toolbar-form-search" onSubmit={handleSearchSubmit}>
             <label>
               <input
@@ -464,7 +433,7 @@ export function AppShell(props: { children: ComponentChildren }) {
 
 export function PageSection(props: {
   className?: string
-  title: string
+  title: ComponentChildren
   description?: ComponentChildren
   actions?: ComponentChildren
   children: ComponentChildren

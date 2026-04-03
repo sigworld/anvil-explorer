@@ -3,6 +3,7 @@ import { formatTimestamp } from '../lib/format.ts'
 import { buildTransactionSummaries } from '../lib/transaction-meta.ts'
 import { useAsyncResource } from '../hooks/use-async-resource.ts'
 import { useExplorer } from '../hooks/use-explorer.tsx'
+import { usePageMeta } from '../hooks/use-page-meta.ts'
 import { normalizeAddress } from '../lib/rpc.ts'
 import {
   AppLink,
@@ -95,6 +96,7 @@ function formatTransactionListTimestamp(timestamp: number | null | undefined) {
 }
 
 export function TransactionsPage(_: RouteProps) {
+  usePageMeta('Transactions', 'View recent transactions on your local Anvil chain — decoded methods, status, gas costs, and linked accounts.')
   const { refreshKey } = useExplorer()
   const accountFilter = normalizeAddress(new URLSearchParams(window.location.search).get('account') ?? '')
   const accountLabel = useAsyncResource(

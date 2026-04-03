@@ -1,3 +1,5 @@
+import { DebugTraceView } from '../components/debug-trace-view.tsx'
+import { StackTraceView } from '../components/stack-trace-view.tsx'
 import type { ComponentChildren } from 'preact'
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { decodeLog, decodeTransaction, toAbiRecord } from '../lib/decode.ts'
@@ -10,16 +12,32 @@ import {
   storeBlockBundle,
   upsertAbi,
   upsertAddressLabel,
+  upsertCodeImage,
+  upsertSourceFile,
 } from '../lib/db.ts'
 import { inspectTransactionFailure } from '../lib/failure.ts'
+import {
+  type BytecodeMatchScanResult,
+  isDirectoryPickerSupported,
+  pickDirectory,
+  scanDirectoryForBytecodeMatch,
+} from '../lib/forge-import.ts'
 import { formatBigIntString, formatNumber, formatUnitsString, shortenHex } from '../lib/format.ts'
 import { buildTokenBalanceEffects } from '../lib/token-effects.ts'
 import { buildTraceTree } from '../lib/trace.ts'
 import { buildTransactionSummary } from '../lib/transaction-meta.ts'
-import type { TokenBalanceEffect, TraceNode } from '../lib/types.ts'
+import type { OpcodeTrace, TokenBalanceEffect, TraceNode } from '../lib/types.ts'
 import { useAsyncResource } from '../hooks/use-async-resource.ts'
 import { useExplorer } from '../hooks/use-explorer.tsx'
-import { createAnvilClient, getAddressKind, getTransactionByHash, getReceiptByHash, getBlockByNumber } from '../lib/rpc.ts'
+import { usePageMeta } from '../hooks/use-page-meta.ts'
+import {
+  createAnvilClient,
+  getAddressKind,
+  getBlockByNumber,
+  getCode,
+  getReceiptByHash,
+  getTransactionByHash,
+} from '../lib/rpc.ts'
 import { normalizeTransaction, normalizeBlock, normalizeReceipt, normalizeLogs } from '../lib/sync.ts'
 import {
   AppLink,
@@ -47,7 +65,7 @@ type RouteProps = {
   path?: string
 }
 
-type TxDetailTab = 'overview' | 'trace'
+type TxDetailTab = 'overview' | 'stack' | 'debug'
 
 function formatTokenEffectDelta(
   delta: string,
@@ -195,6 +213,7 @@ function groupTokenEffectsByToken(tokenEffects: TokenBalanceEffect[]) {
 }
 
 export function TxPage(props: RouteProps) {
+  usePageMeta(props.hash ? `Tx ${props.hash.slice(0, 10)}...` : 'Transaction', 'Inspect a transaction — decoded calldata, event logs, token transfers, debug traces, and revert reasons.')
   const { actions, refreshKey, rpcUrl } = useExplorer()
   const [activeTab, setActiveTab] = useState<TxDetailTab>('overview')
   const [localVersion, setLocalVersion] = useState(0)
@@ -209,10 +228,20 @@ export function TxPage(props: RouteProps) {
   const [contractLabel, setContractLabel] = useState('')
   const [abiResult, setAbiResult] = useState<string | null>(null)
   const [abiError, setAbiError] = useState<string | null>(null)
+  const [abiModalAddress, setAbiModalAddress] = useState<string | null>(null)
+  const [forgeDetecting, setForgeDetecting] = useState(false)
+  const [forgeScanResult, setForgeScanResult] = useState<BytecodeMatchScanResult | null>(null)
+  const [forgeSelectedIndex, setForgeSelectedIndex] = useState(0)
+  const [forgeError, setForgeError] = useState<string | null>(null)
   const [selectedTokenAddress, setSelectedTokenAddress] = useState<string | null>(null)
+  const [opcodeTrace, setOpcodeTrace] = useState<OpcodeTrace | null>(null)
+  const [opcodeLoading, setStructLogLoading] = useState(false)
+  const [opcodeError, setStructLogError] = useState<string | null>(null)
+  const opcodeRequestIdRef = useRef(0)
 
   useEffect(() => {
     traceRequestIdRef.current += 1
+    opcodeRequestIdRef.current += 1
     setActiveTab('overview')
     setTrace(null)
     setRawTrace(null)
@@ -221,55 +250,86 @@ export function TxPage(props: RouteProps) {
     setTraceError(null)
     setRawCalldataOpen(false)
     setSelectedTokenAddress(null)
+    setOpcodeTrace(null)
+    setStructLogLoading(false)
+    setStructLogError(null)
   }, [props.hash])
 
-  useEffect(() => {
-    if (activeTab !== 'trace') {
-      return
-    }
+  async function lazyLoadTrace<T>(
+    ref: { current: number },
+    isLoaded: boolean,
+    isLoading: boolean,
+    setLoading: (v: boolean) => void,
+    setError: (v: string | null) => void,
+    setData: (v: T) => void,
+    fetcher: () => Promise<T>,
+    fallbackError: string,
+  ) {
+    if (!props.hash || isLoading || isLoaded) return
 
-    if (trace) {
-      return
-    }
-
-    if (!props.hash || trace || traceLoading || rawTrace) {
-      return
-    }
-
-    void loadTraceData()
-  }, [activeTab, props.hash, rpcUrl])
-
-  async function loadTraceData() {
-    if (!props.hash || traceLoading || rawTrace) {
-      return
-    }
-
-    const requestId = traceRequestIdRef.current + 1
-    traceRequestIdRef.current = requestId
-    const txHash = props.hash as `0x${string}`
-
-    setTraceLoading(true)
-    setTraceError(null)
+    const requestId = ref.current + 1
+    ref.current = requestId
+    setLoading(true)
+    setError(null)
 
     try {
-      const nextTrace = await actions.loadTrace(txHash)
-      const nextTree = await buildTraceTree(nextTrace)
-      if (traceRequestIdRef.current !== requestId) {
-        return
-      }
-      setRawTrace(nextTrace)
-      setTrace(nextTree)
-      setRawTraceOpen(false)
+      const result = await fetcher()
+      if (ref.current !== requestId) return
+      setData(result)
     } catch (caughtError: unknown) {
-      if (traceRequestIdRef.current === requestId) {
-        setTraceError(caughtError instanceof Error ? caughtError.message : 'Trace request failed')
+      if (ref.current === requestId) {
+        setError(caughtError instanceof Error ? caughtError.message : fallbackError)
       }
     } finally {
-      if (traceRequestIdRef.current === requestId) {
-        setTraceLoading(false)
+      if (ref.current === requestId) {
+        setLoading(false)
       }
     }
   }
+
+  async function loadTraceData() {
+    await lazyLoadTrace(
+      traceRequestIdRef,
+      !!rawTrace,
+      traceLoading,
+      setTraceLoading,
+      setTraceError,
+      (result: { raw: unknown; tree: TraceNode }) => {
+        setRawTrace(result.raw)
+        setTrace(result.tree)
+        setRawTraceOpen(false)
+      },
+      async () => {
+        const raw = await actions.loadTrace(props.hash as `0x${string}`)
+        const tree = await buildTraceTree(raw)
+        return { raw, tree }
+      },
+      'Trace request failed',
+    )
+  }
+
+  async function loadOpcodeData(enableStorage = false) {
+    await lazyLoadTrace(
+      opcodeRequestIdRef,
+      !!opcodeTrace,
+      opcodeLoading,
+      setStructLogLoading,
+      setStructLogError,
+      setOpcodeTrace,
+      () => actions.loadOpcodeTrace(props.hash as `0x${string}`, { enableStorage }),
+      'Opcode trace failed',
+    )
+  }
+
+  useEffect(() => {
+    if ((activeTab !== 'overview' && activeTab !== 'stack' && activeTab !== 'debug') || traceLoading || rawTrace) return
+    void loadTraceData()
+  }, [activeTab, props.hash, rpcUrl])
+
+  useEffect(() => {
+    if (activeTab !== 'debug' || opcodeLoading || opcodeTrace) return
+    void loadOpcodeData(true)
+  }, [activeTab, props.hash, rpcUrl])
 
   const resource = useAsyncResource(
     async () => {
@@ -351,15 +411,32 @@ export function TxPage(props: RouteProps) {
     null,
   )
 
+  function openAbiModal(address: string) {
+    setAbiModalAddress(address)
+    setAbiSource('')
+    setContractLabel('')
+    setAbiResult(null)
+    setAbiError(null)
+    setForgeScanResult(null)
+    setForgeError(null)
+    setForgeDetecting(false)
+    setForgeSelectedIndex(0)
+  }
+
+  function closeAbiModal() {
+    setAbiModalAddress(null)
+    setForgeScanResult(null)
+  }
+
   async function handleAbiSubmit(event: Event) {
     event.preventDefault()
     setAbiError(null)
     setAbiResult(null)
 
-    const contractAddress = resource.data?.transaction.to
+    const contractAddress = abiModalAddress
 
     if (!contractAddress) {
-      setAbiError('This transaction does not target a contract address')
+      setAbiError('No contract address selected')
       return
     }
 
@@ -372,15 +449,93 @@ export function TxPage(props: RouteProps) {
 
       setAbiSource('')
       setContractLabel('')
+      setAbiModalAddress(null)
       setAbiResult(
         contractLabel.trim()
-          ? `Saved ABI and label for ${contractAddress}`
-          : `Saved ABI for ${contractAddress}`,
+          ? `Saved ABI and label for ${shortenHex(contractAddress)}`
+          : `Saved ABI for ${shortenHex(contractAddress)}`,
       )
       setLocalVersion((current) => current + 1)
       actions.refresh()
     } catch (caughtError: unknown) {
       setAbiError(caughtError instanceof Error ? caughtError.message : 'Unable to save ABI')
+    }
+  }
+
+  async function handleForgeDetect() {
+    if (!abiModalAddress) return
+    setForgeError(null)
+    setForgeScanResult(null)
+    setForgeSelectedIndex(0)
+    setForgeDetecting(true)
+
+    try {
+      const client = createAnvilClient(rpcUrl)
+      const bytecode = await getCode(client, abiModalAddress as `0x${string}`)
+      if (!bytecode || bytecode === '0x') {
+        setForgeError('No bytecode found at this address')
+        setForgeDetecting(false)
+        return
+      }
+
+      const dirHandle = await pickDirectory()
+      const result = await scanDirectoryForBytecodeMatch(dirHandle, bytecode)
+
+      if (result.candidates.length === 0) {
+        setForgeError('No matching contracts found. Make sure you select the Forge project root after running forge build.')
+        setForgeDetecting(false)
+        return
+      }
+
+      setForgeScanResult(result)
+    } catch (caughtError: unknown) {
+      if (caughtError instanceof DOMException && caughtError.name === 'AbortError') {
+        // User cancelled
+      } else {
+        setForgeError(caughtError instanceof Error ? caughtError.message : 'Failed to scan directory')
+      }
+    }
+
+    setForgeDetecting(false)
+  }
+
+  async function handleForgeConfirm() {
+    if (!forgeScanResult || !abiModalAddress) return
+    const candidate = forgeScanResult.candidates[forgeSelectedIndex]
+    if (!candidate) return
+
+    try {
+      await upsertAbi(toAbiRecord(abiModalAddress, candidate.source))
+      await upsertAddressLabel(abiModalAddress as `0x${string}`, candidate.name)
+
+      const codeImages = forgeScanResult.codeImagesByArtifact.get(candidate.artifactPath) ?? []
+      for (const image of codeImages) {
+        await upsertCodeImage(image)
+      }
+      for (const file of forgeScanResult.sourceFiles) {
+        await upsertSourceFile(file)
+      }
+
+      const parts: string[] = []
+      if (candidate.bytecodeMatch) {
+        parts.push('exact bytecode match')
+      } else {
+        parts.push(`${candidate.matchedSelectors}/${candidate.onChainSelectors} selectors`)
+      }
+      if (codeImages.length > 0) {
+        parts.push(`${codeImages.length} code image${codeImages.length === 1 ? '' : 's'}`)
+      }
+      if (forgeScanResult.sourceFiles.length > 0) {
+        parts.push(`${forgeScanResult.sourceFiles.length} source file${forgeScanResult.sourceFiles.length === 1 ? '' : 's'}`)
+      }
+
+      setForgeScanResult(null)
+      setAbiModalAddress(null)
+      setAbiResult(`Saved ABI: ${candidate.name} (${parts.join(', ')})`)
+      setLocalVersion((current) => current + 1)
+      actions.refresh()
+    } catch (caughtError: unknown) {
+      setForgeError(caughtError instanceof Error ? caughtError.message : 'Failed to save ABI')
     }
   }
 
@@ -427,6 +582,15 @@ export function TxPage(props: RouteProps) {
                       <span class="address-detail">
                         <AddressLink address={resource.data.transaction.from} />
                         <AddressKindBadge kind={resource.data.fromKind} />
+                        {resource.data.fromKind === 'contract' && !resource.data.contractAbi && (
+                          <button
+                            type="button"
+                            class="attach-abi-inline-btn"
+                            onClick={() => openAbiModal(resource.data!.transaction.from)}
+                          >
+                            Attach ABI
+                          </button>
+                        )}
                       </span>
                     ),
                   },
@@ -436,6 +600,15 @@ export function TxPage(props: RouteProps) {
                       <span class="address-detail">
                         <AddressLink address={resource.data.transaction.to} />
                         <AddressKindBadge kind={resource.data.toKind} />
+                        {resource.data.toKind === 'contract' && resource.data.transaction.to && !resource.data.contractAbi && (
+                          <button
+                            type="button"
+                            class="attach-abi-inline-btn"
+                            onClick={() => openAbiModal(resource.data!.transaction.to!)}
+                          >
+                            Attach ABI
+                          </button>
+                        )}
                       </span>
                     ),
                   },
@@ -478,21 +651,22 @@ export function TxPage(props: RouteProps) {
                         const isActive = group.tokenAddress === activeTokenGroup?.tokenAddress
 
                         return (
-                          <div key={group.tokenAddress} class={`tx-token-item ${isActive ? 'is-active' : ''}`.trim()}>
-                            <button
-                              type="button"
-                              role="tab"
-                              aria-selected={isActive}
-                              class={`tx-token-button ${isActive ? 'is-active' : ''}`.trim()}
-                              onClick={() => setSelectedTokenAddress(group.tokenAddress)}
-                            >
+                          <div
+                            key={group.tokenAddress}
+                            class={`tx-token-item ${isActive ? 'is-active' : ''}`.trim()}
+                            onClick={() => setSelectedTokenAddress(group.tokenAddress)}
+                            role="tab"
+                            aria-selected={isActive}
+                            style={{ cursor: 'pointer' }}
+                          >
+                            <div class={`tx-token-button ${isActive ? 'is-active' : ''}`.trim()}>
                               <span class="tx-token-button-main">
                                 <strong>{group.symbol ?? group.name ?? 'Unknown token'}</strong>
                               </span>
                               <span class="tx-token-button-meta">
                                 {formatNumber(group.holderCount)} holders
                               </span>
-                            </button>
+                            </div>
                             <ResolvedAddressText address={group.tokenAddress} linked />
                           </div>
                         )
@@ -603,169 +777,312 @@ export function TxPage(props: RouteProps) {
             <button
               type="button"
               role="tab"
-              aria-selected={activeTab === 'trace'}
-              class={`tx-detail-tab ${activeTab === 'trace' ? 'tx-detail-tab-active' : ''}`}
-              onClick={() => setActiveTab('trace')}
+              aria-selected={activeTab === 'stack'}
+              class={`tx-detail-tab ${activeTab === 'stack' ? 'tx-detail-tab-active' : ''}`}
+              onClick={() => setActiveTab('stack')}
             >
-              Trace
+              Stack Trace
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'debug'}
+              class={`tx-detail-tab ${activeTab === 'debug' ? 'tx-detail-tab-active' : ''}`}
+              onClick={() => setActiveTab('debug')}
+            >
+              Debug
             </button>
           </div>
 
           {activeTab === 'overview' && (
-            <>
-              <TxDetailPanel
-                title="Calldata"
-                description="Raw input plus ABI-backed decode when available"
-                actions={
-                  decodedCall ? (
-                    <div class="panel-header-actions">
-                      <button
-                        type="button"
-                        class={`section-header-toggle ${rawCalldataOpen ? 'is-active' : ''}`.trim()}
-                        onClick={() => setRawCalldataOpen((current) => !current)}
-                        aria-pressed={rawCalldataOpen}
-                      >
-                        {rawCalldataOpen ? 'Hide raw data' : 'Show raw data'}
-                      </button>
-                    </div>
-                  ) : undefined
-                }
-              >
-                {decodedCall ? (
-                  <div class="decoded-card">
-                    <p class="eyebrow">Decoded Function</p>
-                    <strong>{decodedCall.signature}</strong>
-                    <ul class="decoded-list">
-                      {decodedCall.args.map((arg) => (
-                        <li key={`${arg.name}-${arg.value}`}>
-                          <span class="decoded-arg-name">{arg.name}</span>
-                          <code class="decoded-arg-value">{arg.value}</code>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : (
-                  <>
-                    <pre class="json-view mono calldata-view">{resource.data.transaction.input}</pre>
-                    <p class="muted">No matching ABI for this calldata.</p>
-                    {resource.data.transaction.to && (
-                      <div class="decoded-card">
-                        <p class="eyebrow">Attach ABI</p>
-                        <p class="muted">
-                          Save or replace the ABI for <AddressLink address={resource.data.transaction.to} /> to decode this
-                          transaction without manually mapping selectors. You can also save a contract label here so future
-                          views show a readable name instead of only the address.
-                        </p>
-                        <form class="stack-form" onSubmit={handleAbiSubmit}>
-                          <label>
-                            <span class="field-label">Contract Label</span>
-                            <input
-                              value={contractLabel}
-                              onInput={(event) => setContractLabel(event.currentTarget.value)}
-                              placeholder="Treasury, Token, Vault, Router"
-                            />
-                          </label>
-                          <label>
-                            <span class="field-label">ABI JSON</span>
-                            <textarea
-                              rows={12}
-                              value={abiSource}
-                              onInput={(event) => setAbiSource(event.currentTarget.value)}
-                              placeholder='[{"type":"function","name":"transfer",...}] or a Forge artifact JSON object'
-                            />
-                          </label>
-                          <div class="button-row">
-                            <button type="submit">Save ABI</button>
-                          </div>
-                        </form>
-                        {abiResult && <p class="success-copy">{abiResult}</p>}
-                        {abiError && <ErrorState message={abiError} />}
-                        <FoundryAbiTips />
+            <div class="tx-overview-columns">
+              <div class="tx-overview-left">
+                <TxDetailPanel
+                  title="Calldata"
+                  description="Raw input plus ABI-backed decode when available"
+                  actions={
+                    decodedCall ? (
+                      <div class="panel-header-actions">
+                        <button
+                          type="button"
+                          class={`section-header-toggle ${rawCalldataOpen ? 'is-active' : ''}`.trim()}
+                          onClick={() => setRawCalldataOpen((current) => !current)}
+                          aria-pressed={rawCalldataOpen}
+                        >
+                          {rawCalldataOpen ? 'Hide raw data' : 'Show raw data'}
+                        </button>
                       </div>
-                    )}
-                  </>
-                )}
-                {decodedCall && rawCalldataOpen && (
-                  <pre class="json-view mono calldata-view">{resource.data.transaction.input}</pre>
-                )}
-              </TxDetailPanel>
-
-              <div class="tx-detail-section-spacer">
-                <TxDetailPanel title="Receipt Logs" description="Indexed event logs for this transaction">
-                  {resource.data.logs.length === 0 && (
-                    <EmptyState title="No logs emitted" body="This receipt has no indexed logs." />
+                    ) : undefined
+                  }
+                >
+                  {decodedCall ? (
+                    <div class="decoded-card">
+                      <p class="eyebrow">Decoded Function</p>
+                      <strong>{decodedCall.signature}</strong>
+                      <ul class="decoded-list">
+                        {decodedCall.args.map((arg) => (
+                          <li key={`${arg.name}-${arg.value}`}>
+                            <span class="decoded-arg-name">{arg.name}</span>
+                            <code class="decoded-arg-value">{arg.value}</code>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : (
+                    <>
+                      <pre class="json-view mono calldata-view">{resource.data.transaction.input}</pre>
+                      <p class="muted">
+                        No matching ABI for this calldata.
+                        {resource.data.transaction.to && !resource.data.contractAbi && (
+                          <>
+                            {' '}
+                            <button
+                              type="button"
+                              class="link-button"
+                              onClick={() => openAbiModal(resource.data!.transaction.to!)}
+                            >
+                              Attach an ABI
+                            </button>
+                            {' '}to decode.
+                          </>
+                        )}
+                      </p>
+                    </>
                   )}
-                  {resource.data.logs.length > 0 && (
-                    <SummaryTable
-                      className="summary-table-logs tx-receipt-logs-table"
-                      headers={[
-                        'Log',
-                        'Address',
-                        <span class="table-header-tooltip" data-tooltip="Click cell to decode">Topics</span>,
-                        'Data',
-                      ]}
-                    >
-                      {resource.data.logs.map((log) => {
-                        const decoded = resource.data?.contractAbi
-                          ? decodeLog(log, resource.data.contractAbi)
-                          : null
-                        const topicsText = log.topics.length > 0 ? log.topics.join('\n') : 'n/a'
+                  {decodedCall && rawCalldataOpen && (
+                    <pre class="json-view mono calldata-view">{resource.data.transaction.input}</pre>
+                  )}
+                </TxDetailPanel>
 
-                        return (
-                          <tr key={`${log.txHash ?? 'tx'}-${log.logIndex ?? 0}`}>
-                            <td>{log.logIndex ?? 'n/a'}</td>
-                            <td>
-                              <AddressLink address={log.address} />
-                            </td>
-                            <td>
-                              <LogDecodePopup decoded={decoded} trigger={<div class="log-data-cell mono">{topicsText}</div>} />
-                            </td>
-                            <td>
-                              <div class="log-data-cell mono">{log.data}</div>
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </SummaryTable>
+                <div class="tx-detail-section-spacer">
+                  <TxDetailPanel title="Receipt Logs" description="Indexed event logs for this transaction">
+                    {resource.data.logs.length === 0 && (
+                      <EmptyState title="No logs emitted" body="This receipt has no indexed logs." />
+                    )}
+                    {resource.data.logs.length > 0 && (
+                      <SummaryTable
+                        className="summary-table-logs tx-receipt-logs-table"
+                        headers={[
+                          'Log',
+                          'Address',
+                          <span class="table-header-tooltip" data-tooltip="Click cell to decode">Topics</span>,
+                          'Data',
+                        ]}
+                      >
+                        {resource.data.logs.map((log) => {
+                          const decoded = resource.data?.contractAbi
+                            ? decodeLog(log, resource.data.contractAbi)
+                            : null
+                          const topicsText = log.topics.length > 0 ? log.topics.join('\n') : 'n/a'
+
+                          return (
+                            <tr key={`${log.txHash ?? 'tx'}-${log.logIndex ?? 0}`}>
+                              <td>{log.logIndex ?? 'n/a'}</td>
+                              <td>
+                                <AddressLink address={log.address} />
+                              </td>
+                              <td class={decoded ? 'log-topic-decoded' : undefined}>
+                                <LogDecodePopup decoded={decoded} trigger={<div class="log-data-cell mono">{topicsText}</div>} />
+                              </td>
+                              <td>
+                                <div class="log-data-cell mono">{log.data}</div>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </SummaryTable>
+                    )}
+                  </TxDetailPanel>
+                </div>
+              </div>
+
+              <div class="tx-overview-right">
+                <TxDetailPanel
+                  title="Call Tree"
+                  description="On-demand call tree from debug_traceTransaction with callTracer."
+                  actions={
+                    trace && rawTrace ? (
+                      <div class="panel-header-actions">
+                        <button
+                          type="button"
+                          class={`section-header-toggle ${rawTraceOpen ? 'is-active' : ''}`.trim()}
+                          onClick={() => setRawTraceOpen((current) => !current)}
+                          aria-pressed={rawTraceOpen}
+                        >
+                          {rawTraceOpen ? 'Hide raw JSON' : 'Show raw JSON'}
+                        </button>
+                      </div>
+                    ) : undefined
+                  }
+                >
+                  {traceError && <ErrorState message={traceError} />}
+                  {traceLoading && !trace && <p class="muted">Loading trace…</p>}
+                  {!trace && !traceLoading && !traceError && (
+                    <div class="panel-empty-action">
+                      <button type="button" onClick={() => void loadTraceData()}>Load Call Tree</button>
+                    </div>
+                  )}
+                  {trace && <TraceTree node={trace} />}
+                  {rawTrace && rawTraceOpen && (
+                    <div class="tx-detail-subsection-spacer">
+                      <p class="eyebrow">Raw Trace JSON</p>
+                      <JsonView value={rawTrace} />
+                    </div>
                   )}
                 </TxDetailPanel>
               </div>
-            </>
+            </div>
           )}
 
-          {activeTab === 'trace' && (
-            <TxDetailPanel
-              title="Call Tree"
-              description="On-demand call tree from debug_traceTransaction with callTracer."
-              actions={
-                trace && rawTrace ? (
-                  <div class="panel-header-actions">
-                    <button
-                      type="button"
-                      class={`section-header-toggle ${rawTraceOpen ? 'is-active' : ''}`.trim()}
-                      onClick={() => setRawTraceOpen((current) => !current)}
-                      aria-pressed={rawTraceOpen}
-                    >
-                      {rawTraceOpen ? 'Hide raw JSON' : 'Show raw JSON'}
-                    </button>
-                  </div>
-                ) : undefined
-              }
-            >
-              {traceError && <ErrorState message={traceError} />}
+          {activeTab === 'stack' && (
+            <section class="stack-trace-wrap">
               {traceLoading && !trace && <p class="muted">Loading trace…</p>}
+              {traceError && <ErrorState message={traceError} />}
               {trace && (
-                <>
-                  <TraceTree node={trace} />
-                </>
+                <StackTraceView
+                  trace={trace}
+                  opcodeTrace={opcodeTrace}
+                  opcodeLoading={opcodeLoading}
+                  onRequestOpcodeTrace={() => {
+                    if (!opcodeTrace && !opcodeLoading) {
+                      void loadOpcodeData(true)
+                    }
+                  }}
+                  loadRuntimeCode={async (address) => {
+                    const client = createAnvilClient(rpcUrl)
+                    return getCode(
+                      client,
+                      address,
+                      resource.data?.transaction.blockNumber !== null && resource.data?.transaction.blockNumber !== undefined
+                        ? `0x${resource.data.transaction.blockNumber.toString(16)}`
+                        : 'latest',
+                    )
+                  }}
+                />
               )}
-              {rawTrace && rawTraceOpen && (
-                <div class="tx-detail-subsection-spacer">
-                  <p class="eyebrow">Raw Trace JSON</p>
-                  <JsonView value={rawTrace} />
+            </section>
+          )}
+
+          {activeTab === 'debug' && (
+            <section class="debug-trace-wrap">
+              {opcodeError && <ErrorState message={opcodeError} />}
+              {opcodeLoading && !opcodeTrace && <p class="muted">Loading opcode trace…</p>}
+              {opcodeTrace && opcodeTrace.entries.length === 0 && (
+                <EmptyState
+                  title="No opcode trace data"
+                  body="debug_traceTransaction returned 0 struct logs. This is a known issue with some Anvil versions on forked chains. Try upgrading Foundry (foundryup) or restarting Anvil."
+                />
+              )}
+              {opcodeTrace && opcodeTrace.entries.length > 0 && trace && (
+                <DebugTraceView
+                  trace={opcodeTrace}
+                  callTree={trace}
+                  loadRuntimeCode={async (address) => {
+                    const client = createAnvilClient(rpcUrl)
+                    return getCode(
+                      client,
+                      address,
+                      resource.data?.transaction.blockNumber !== null && resource.data?.transaction.blockNumber !== undefined
+                        ? `0x${resource.data.transaction.blockNumber.toString(16)}`
+                        : 'latest',
+                    )
+                  }}
+                />
+              )}
+              {opcodeTrace && opcodeTrace.entries.length > 0 && !trace && <p class="muted">Call tree is still loading. Debug mode starts after the frame tree is ready.</p>}
+            </section>
+          )}
+
+          {abiResult && <p class="success-copy">{abiResult}</p>}
+
+          {abiModalAddress && (
+            <div class="modal-backdrop" onClick={(event) => { if (event.target === event.currentTarget) closeAbiModal() }}>
+              <div class="modal-dialog">
+                <div class="modal-dialog-header">
+                  <h3>Attach ABI</h3>
+                  <button type="button" class="modal-close-button section-header-toggle" onClick={closeAbiModal} aria-label="Close">&times;</button>
                 </div>
-              )}
-            </TxDetailPanel>
+                <p class="muted">
+                  Save an ABI for <span class="mono">{shortenHex(abiModalAddress)}</span> to decode calls and events.
+                </p>
+                {forgeScanResult ? (
+                  <div class="stack-form">
+                    <span class="field-label">
+                      {forgeScanResult.candidates.length} matching contract{forgeScanResult.candidates.length === 1 ? '' : 's'} found
+                    </span>
+                    <div class="forge-match-list">
+                      {forgeScanResult.candidates.map((candidate, index) => (
+                        <label
+                          key={candidate.artifactPath}
+                          class={`forge-match-item${index === forgeSelectedIndex ? ' forge-match-item-selected' : ''}`}
+                        >
+                          <input
+                            type="radio"
+                            name="forge-match-modal"
+                            checked={index === forgeSelectedIndex}
+                            onChange={() => setForgeSelectedIndex(index)}
+                          />
+                          <div class="forge-match-info">
+                            <span class="forge-match-name">{candidate.name}</span>
+                            {candidate.sourcePath && (
+                              <span class="forge-match-path muted">{candidate.sourcePath}</span>
+                            )}
+                          </div>
+                          <div class="forge-match-badges">
+                            {candidate.bytecodeMatch && (
+                              <span class="forge-match-badge forge-match-badge-exact">exact</span>
+                            )}
+                            {candidate.hasSourceImages && (
+                              <span class="forge-match-badge forge-match-badge-sources">sources</span>
+                            )}
+                            <span class={`forge-match-score${candidate.matchedSelectors === candidate.totalAbiSelectors ? ' forge-match-score-high' : ''}`}>
+                              {candidate.matchedSelectors}/{candidate.onChainSelectors} selectors
+                            </span>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                    <div class="button-row button-row-inline">
+                      <button type="button" onClick={handleForgeConfirm}>Apply ABI</button>
+                      <button type="button" onClick={() => setForgeScanResult(null)}>Back</button>
+                    </div>
+                    {forgeError && <ErrorState message={forgeError} />}
+                  </div>
+                ) : (
+                  <form class="stack-form" onSubmit={handleAbiSubmit}>
+                    <label>
+                      <span class="field-label">Contract Label</span>
+                      <input
+                        value={contractLabel}
+                        onInput={(event) => setContractLabel(event.currentTarget.value)}
+                        placeholder="Treasury, Token, Vault, Router"
+                      />
+                    </label>
+                    <label>
+                      <span class="field-label">ABI JSON</span>
+                      <textarea
+                        rows={12}
+                        value={abiSource}
+                        onInput={(event) => setAbiSource(event.currentTarget.value)}
+                        placeholder='[{"type":"function","name":"transfer",...}] or a Forge artifact JSON object'
+                      />
+                    </label>
+                    <div class="button-row button-row-inline">
+                      <button type="submit">Save ABI</button>
+                      {isDirectoryPickerSupported() && (
+                        <button type="button" onClick={handleForgeDetect} disabled={forgeDetecting}>
+                          {forgeDetecting ? 'Scanning...' : 'Detect from Forge'}
+                        </button>
+                      )}
+                      <button type="button" onClick={closeAbiModal}>Cancel</button>
+                    </div>
+                    {abiError && <ErrorState message={abiError} />}
+                    {forgeError && <ErrorState message={forgeError} />}
+                    <FoundryAbiTips />
+                  </form>
+                )}
+              </div>
+            </div>
           )}
         </>
       )}

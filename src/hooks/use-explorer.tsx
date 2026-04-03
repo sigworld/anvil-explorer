@@ -6,29 +6,37 @@ import { DEFAULT_ABI_API_URL, syncUploadedAbis } from '../lib/abi-api.ts'
 import {
   getExplorerStats,
   resetExplorerData,
+  resetAllExplorerData,
+  setActiveChainScope,
 } from '../lib/db.ts'
 import { createLogger } from '../lib/logger.ts'
 import {
   createAnvilClient,
   createSnapshot,
+  dealErc20,
+  getOpcodeTrace,
   getTrace,
   mineBlocks,
+  mintNativeBalance,
   revertSnapshot,
-  setBalance,
+  type OpcodeTraceOptions,
 } from '../lib/rpc.ts'
 import { syncChain, type SyncProgress } from '../lib/sync.ts'
-import type { ChainMeta, ExplorerStats, ExplorerStatus } from '../lib/types.ts'
+import type { ChainMeta, ExplorerEndpoint, ExplorerStats, ExplorerStatus, OpcodeTrace } from '../lib/types.ts'
 
 type ExplorerContextValue = {
+  activeEndpointId: string
+  endpoints: ExplorerEndpoint[]
   chainMeta: ChainMeta | null
   abiApiUrl: string
   error: string | null
   refreshKey: number
   rpcUrl: string
   startBlock: number | null
+  setActiveEndpointId: (id: string) => void
   setAbiApiUrl: (value: string) => void
-  setRpcUrl: (value: string) => void
-  setStartBlock: (value: number | null) => void
+  saveEndpoint: (input: { id?: string; name: string; rpcUrl: string; startBlock: number | null; color?: string }) => string
+  deleteEndpoint: (id: string) => void
   snapshots: string[]
   status: ExplorerStatus
   stats: ExplorerStats
@@ -37,18 +45,24 @@ type ExplorerContextValue = {
     reconnect: () => void
     refresh: () => void
     resetData: () => Promise<void>
+    resetAllData: () => Promise<void>
     loadTrace: (txHash: `0x${string}`) => Promise<unknown>
+    loadOpcodeTrace: (txHash: `0x${string}`, options?: OpcodeTraceOptions) => Promise<OpcodeTrace>
     mineBlocks: (count: number) => Promise<void>
-    setBalance: (address: string, amountEth: string) => Promise<void>
+    mintNativeBalance: (address: string, amountEth: string) => Promise<void>
+    dealErc20: (tokenAddress: string, recipientAddress: string, amount: bigint) => Promise<void>
     createSnapshot: () => Promise<string>
     revertSnapshot: (snapshotId: string) => Promise<boolean>
   }
 }
 
-const STORAGE_KEY = 'anvil-explorer.rpc-url'
+const ENDPOINTS_STORAGE_KEY = 'anvil-explorer.endpoints'
+const ACTIVE_ENDPOINT_STORAGE_KEY = 'anvil-explorer.active-endpoint-id'
+const LEGACY_RPC_STORAGE_KEY = 'anvil-explorer.rpc-url'
 const ABI_API_STORAGE_KEY = 'anvil-explorer.abi-api-url'
-const START_BLOCK_STORAGE_KEY = 'anvil-explorer.start-block'
+const LEGACY_START_BLOCK_STORAGE_KEY = 'anvil-explorer.start-block'
 const DEFAULT_URL = 'http://127.0.0.1:8545'
+const DEFAULT_ENDPOINT_ID = 'local-default'
 const EMPTY_STATS: ExplorerStats = {
   blockCount: 0,
   transactionCount: 0,
@@ -59,6 +73,75 @@ const EMPTY_STATS: ExplorerStats = {
 const logger = createLogger('app')
 
 const ExplorerContext = createContext<ExplorerContextValue | null>(null)
+
+const ENDPOINT_COLORS = [
+  'hsl(210 70% 90%)', 'hsl(150 70% 90%)', 'hsl(30 70% 90%)',
+  'hsl(330 70% 90%)', 'hsl(270 70% 90%)', 'hsl(60 70% 90%)',
+  'hsl(180 70% 90%)', 'hsl(0 70% 90%)', 'hsl(120 70% 90%)',
+  'hsl(300 70% 90%)',
+]
+
+function pickColor(index: number): string {
+  return ENDPOINT_COLORS[index % ENDPOINT_COLORS.length]
+}
+
+function createDefaultEndpoint(): ExplorerEndpoint {
+  return { id: DEFAULT_ENDPOINT_ID, name: 'Local Anvil', rpcUrl: DEFAULT_URL, startBlock: null, color: ENDPOINT_COLORS[0] }
+}
+
+function parseStoredStartBlock(value: string | null): number | null {
+  if (value === null) return null
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
+}
+
+function readInitialEndpoints(): ExplorerEndpoint[] {
+  const fallback = [createDefaultEndpoint()]
+  const stored = window.localStorage.getItem(ENDPOINTS_STORAGE_KEY)
+
+  if (stored) {
+    try {
+      const parsed = JSON.parse(stored)
+      if (!Array.isArray(parsed)) return fallback
+
+      const endpoints = parsed
+        .map((item: any, index: number) => {
+          if (!item || typeof item !== 'object') return null
+          const rpcUrl = typeof item.rpcUrl === 'string' ? item.rpcUrl.trim() : ''
+          if (!rpcUrl) return null
+          return {
+            id: typeof item.id === 'string' && item.id.trim() ? item.id.trim() : `endpoint-${index + 1}`,
+            name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : `Endpoint ${index + 1}`,
+            rpcUrl,
+            startBlock: typeof item.startBlock === 'number' && Number.isFinite(item.startBlock) && item.startBlock >= 0 ? item.startBlock : null,
+            color: typeof item.color === 'string' && item.color.trim() ? item.color.trim() : pickColor(index),
+          } as ExplorerEndpoint
+        })
+        .filter((item: ExplorerEndpoint | null): item is ExplorerEndpoint => item !== null)
+
+      return endpoints.length > 0 ? endpoints : fallback
+    } catch {
+      return fallback
+    }
+  }
+
+  const legacyRpcUrl = window.localStorage.getItem(LEGACY_RPC_STORAGE_KEY)?.trim() ?? ''
+  const legacyStartBlock = parseStoredStartBlock(window.localStorage.getItem(LEGACY_START_BLOCK_STORAGE_KEY))
+
+  if (!legacyRpcUrl) return fallback
+
+  return [{
+    id: DEFAULT_ENDPOINT_ID,
+    name: legacyRpcUrl === DEFAULT_URL ? 'Local Anvil' : 'Primary Endpoint',
+    rpcUrl: legacyRpcUrl,
+    startBlock: legacyStartBlock,
+    color: ENDPOINT_COLORS[0],
+  }]
+}
+
+function createEndpointScopeKey(endpoint: ExplorerEndpoint) {
+  return `${endpoint.id}::${endpoint.rpcUrl.trim().toLowerCase()}`
+}
 
 function wait(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
@@ -94,7 +177,12 @@ function areChainMetaEqual(left: ChainMeta | null, right: ChainMeta | null) {
 }
 
 export function ExplorerProvider(props: { children: ComponentChildren }) {
-  const [rpcUrl, setRpcUrl] = useState(() => window.localStorage.getItem(STORAGE_KEY) ?? DEFAULT_URL)
+  const [endpoints, setEndpoints] = useState<ExplorerEndpoint[]>(readInitialEndpoints)
+  const [activeEndpointId, setActiveEndpointIdState] = useState(() => {
+    const stored = window.localStorage.getItem(ACTIVE_ENDPOINT_STORAGE_KEY)
+    const initial = readInitialEndpoints()
+    return stored && initial.some((ep) => ep.id === stored) ? stored : initial[0].id
+  })
   const [abiApiUrl, setAbiApiUrl] = useState(
     () => window.localStorage.getItem(ABI_API_STORAGE_KEY) ?? DEFAULT_ABI_API_URL,
   )
@@ -104,26 +192,27 @@ export function ExplorerProvider(props: { children: ComponentChildren }) {
   const [chainMeta, setChainMeta] = useState<ChainMeta | null>(null)
   const [stats, setStats] = useState<ExplorerStats>(EMPTY_STATS)
   const [refreshKey, setRefreshKey] = useState(0)
-  const [startBlock, setStartBlock] = useState<number | null>(() => {
-    const stored = window.localStorage.getItem(START_BLOCK_STORAGE_KEY)
-    if (stored === null) return null
-    const parsed = Number.parseInt(stored, 10)
-    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
-  })
   const [snapshots, setSnapshots] = useState<string[]>([])
   const [connectionVersion, setConnectionVersion] = useState(0)
 
-  useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEY, rpcUrl)
-  }, [rpcUrl])
+  const activeEndpoint = endpoints.find((ep) => ep.id === activeEndpointId) ?? endpoints[0] ?? createDefaultEndpoint()
+  const rpcUrl = activeEndpoint.rpcUrl
+  const startBlock = activeEndpoint.startBlock
+  const activeScopeKey = createEndpointScopeKey(activeEndpoint)
 
   useEffect(() => {
-    if (startBlock === null) {
-      window.localStorage.removeItem(START_BLOCK_STORAGE_KEY)
-    } else {
-      window.localStorage.setItem(START_BLOCK_STORAGE_KEY, String(startBlock))
-    }
-  }, [startBlock])
+    setActiveChainScope(activeScopeKey)
+  }, [activeScopeKey])
+
+  useEffect(() => {
+    window.localStorage.setItem(ENDPOINTS_STORAGE_KEY, JSON.stringify(endpoints))
+    window.localStorage.removeItem(LEGACY_RPC_STORAGE_KEY)
+    window.localStorage.removeItem(LEGACY_START_BLOCK_STORAGE_KEY)
+  }, [endpoints])
+
+  useEffect(() => {
+    window.localStorage.setItem(ACTIVE_ENDPOINT_STORAGE_KEY, activeEndpointId)
+  }, [activeEndpointId])
 
   useEffect(() => {
     window.localStorage.setItem(ABI_API_STORAGE_KEY, abiApiUrl)
@@ -216,12 +305,16 @@ export function ExplorerProvider(props: { children: ComponentChildren }) {
     return () => {
       cancelled = true
     }
-  }, [rpcUrl, startBlock, connectionVersion])
+  }, [activeScopeKey, rpcUrl, startBlock, connectionVersion])
 
   useEffect(() => {
     let cancelled = false
     let consecutiveFailures = 0
     const MAX_CONSECUTIVE_FAILURES = 5
+
+    if (!abiApiUrl.trim()) {
+      return
+    }
 
     async function run() {
       while (!cancelled) {
@@ -273,16 +366,77 @@ export function ExplorerProvider(props: { children: ComponentChildren }) {
     }
   }
 
+  function switchEndpoint(nextId: string) {
+    if (!endpoints.some((ep) => ep.id === nextId) || nextId === activeEndpointId) return
+    setSnapshots([])
+    setChainMeta(null)
+    setStats(EMPTY_STATS)
+    setError(null)
+    setStatus('idle')
+    setStatusMessage('Waiting to connect')
+    setActiveEndpointIdState(nextId)
+    setConnectionVersion((current) => current + 1)
+  }
+
+  function saveEndpoint(input: { id?: string; name: string; rpcUrl: string; startBlock: number | null; color?: string }) {
+    const rpc = input.rpcUrl.trim()
+    const name = input.name.trim()
+    if (!rpc) throw new Error('RPC URL is required')
+
+    const endpointId = input.id?.trim() || `endpoint-${Date.now()}`
+
+    // Preserve existing color, use provided color, or pick a new one
+    const existing = endpoints.find((ep) => ep.id === endpointId)
+    const color = input.color ?? existing?.color ?? pickColor(endpoints.length)
+
+    const nextEndpoint: ExplorerEndpoint = {
+      id: endpointId,
+      name: name || 'Untitled Endpoint',
+      rpcUrl: rpc,
+      startBlock: input.startBlock,
+      color,
+    }
+
+    setEndpoints((current) => {
+      const existingIndex = current.findIndex((ep) => ep.id === endpointId)
+      if (existingIndex === -1) return [...current, nextEndpoint]
+      return current.map((ep) => (ep.id === endpointId ? nextEndpoint : ep))
+    })
+
+    if (endpointId === activeEndpointId) {
+      setConnectionVersion((current) => current + 1)
+    }
+
+    return endpointId
+  }
+
+  function deleteEndpoint(endpointId: string) {
+    if (endpoints.length <= 1) throw new Error('At least one endpoint must remain')
+
+    const nextActiveId = endpointId === activeEndpointId
+      ? endpoints.find((ep) => ep.id !== endpointId)?.id
+      : activeEndpointId
+
+    setEndpoints((current) => current.filter((ep) => ep.id !== endpointId))
+
+    if (endpointId === activeEndpointId && nextActiveId) {
+      switchEndpoint(nextActiveId)
+    }
+  }
+
   const value: ExplorerContextValue = {
+    activeEndpointId,
+    endpoints,
     abiApiUrl,
     chainMeta,
     error,
     refreshKey,
     rpcUrl,
     startBlock,
+    setActiveEndpointId: switchEndpoint,
     setAbiApiUrl,
-    setRpcUrl,
-    setStartBlock,
+    saveEndpoint,
+    deleteEndpoint,
     snapshots,
     status,
     stats,
@@ -300,11 +454,29 @@ export function ExplorerProvider(props: { children: ComponentChildren }) {
         setRefreshKey((current) => current + 1)
         setChainMeta(null)
         setStats(EMPTY_STATS)
+        setError(null)
+        setStatus('idle')
+        setStatusMessage('Waiting to connect')
+        setConnectionVersion((current) => current + 1)
+      },
+      async resetAllData() {
+        await resetAllExplorerData()
+        setSnapshots([])
+        setRefreshKey((current) => current + 1)
+        setChainMeta(null)
+        setStats(EMPTY_STATS)
+        setError(null)
+        setStatus('idle')
+        setStatusMessage('Waiting to connect')
         setConnectionVersion((current) => current + 1)
       },
       async loadTrace(txHash) {
         const client = createAnvilClient(rpcUrl)
         return getTrace(client, txHash)
+      },
+      async loadOpcodeTrace(txHash, options) {
+        const client = createAnvilClient(rpcUrl)
+        return getOpcodeTrace(client, txHash, options)
       },
       async mineBlocks(count) {
         await runAction(async () => {
@@ -312,10 +484,16 @@ export function ExplorerProvider(props: { children: ComponentChildren }) {
           await mineBlocks(client, count)
         })
       },
-      async setBalance(address, amountEth) {
+      async mintNativeBalance(address, amountEth) {
         await runAction(async () => {
           const client = createAnvilClient(rpcUrl)
-          await setBalance(client, address, amountEth)
+          await mintNativeBalance(client, address, amountEth)
+        })
+      },
+      async dealErc20(tokenAddress, recipientAddress, amount) {
+        await runAction(async () => {
+          const client = createAnvilClient(rpcUrl)
+          await dealErc20(client, tokenAddress, recipientAddress, amount)
         })
       },
       async createSnapshot() {

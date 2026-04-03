@@ -3,6 +3,7 @@ import { formatNumber, formatTimestamp, shortenHex } from '../lib/format.ts'
 import { buildAddressActivitySummaries, buildFailedTransactionSummaries, buildTransactionSummaries } from '../lib/transaction-meta.ts'
 import { useAsyncResource } from '../hooks/use-async-resource.ts'
 import { useExplorer } from '../hooks/use-explorer.tsx'
+import { usePageMeta } from '../hooks/use-page-meta.ts'
 import { createAnvilClient, getAddressKind } from '../lib/rpc.ts'
 import {
   AppLink,
@@ -48,6 +49,7 @@ async function resolveAddressActivity(
 }
 
 export function HomePage(_: RouteProps) {
+  usePageMeta('Overview', 'Live overview of your local Anvil chain — recent blocks, transactions, active wallets, and top contracts.')
   const { refreshKey, rpcUrl } = useExplorer()
   const recentBlocks = useAsyncResource(() => getLatestBlocks(8), [refreshKey], [])
   const recentTransactions = useAsyncResource(

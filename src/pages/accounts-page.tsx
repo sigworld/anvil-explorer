@@ -4,6 +4,7 @@ import { formatEtherString, formatNumber } from '../lib/format.ts'
 import { createAnvilClient, getAddressKind, getNativeBalance } from '../lib/rpc.ts'
 import { useAsyncResource } from '../hooks/use-async-resource.ts'
 import { useExplorer } from '../hooks/use-explorer.tsx'
+import { usePageMeta } from '../hooks/use-page-meta.ts'
 import {
   AppLink,
   AddressLink,
@@ -46,6 +47,7 @@ function SortHeader(props: {
 }
 
 export function AccountsPage(_: RouteProps) {
+  usePageMeta('Accounts', 'List every wallet address seen on your local Anvil chain with balances, transaction counts, and last activity.')
   const { refreshKey, rpcUrl } = useExplorer()
   const [sortKey, setSortKey] = useState<SortKey>('transactionCount')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc')

@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'preact/hooks'
 import { DEFAULT_ABI_API_URL } from '../lib/abi-api.ts'
-import { deleteAbi, getResolvedAddressLabel, listAbis, upsertAbi, upsertAddressLabel } from '../lib/db.ts'
+import {
+  deleteAbi,
+  getResolvedAddressLabel,
+  listAbis,
+  upsertAbi,
+  upsertAddressLabel,
+  upsertCodeImage,
+  upsertSourceFile,
+} from '../lib/db.ts'
 import { toAbiRecord } from '../lib/decode.ts'
 import { type ImportScanResult, isDirectoryPickerSupported, pickDirectory, scanDirectory, toAbiRecords } from '../lib/forge-import.ts'
 import { shortenHex } from '../lib/format.ts'
@@ -14,6 +22,7 @@ import {
   LoadingState,
   PageSection,
 } from '../components/common.tsx'
+import { usePageMeta } from '../hooks/use-page-meta.ts'
 
 type RouteProps = { path?: string }
 
@@ -73,6 +82,7 @@ function AbiTileAddress(props: { address: string }) {
 }
 
 export function AbisPage(_: RouteProps) {
+  usePageMeta('ABIs', 'Manage contract ABIs for calldata and log decoding — upload manually, import from Forge, or sync from an API endpoint.')
   const { abiApiUrl, actions, refreshKey, setAbiApiUrl } = useExplorer()
   const [localVersion, setLocalVersion] = useState(0)
   const [isSaveAbiModalOpen, setIsSaveAbiModalOpen] = useState(false)
@@ -81,12 +91,12 @@ export function AbisPage(_: RouteProps) {
   const [source, setSource] = useState('')
   const [copiedAbiAddress, setCopiedAbiAddress] = useState<string | null>(null)
   const [apiUrlDraft, setApiUrlDraft] = useState(abiApiUrl)
-  const [apiConfigResult, setApiConfigResult] = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const [importScan, setImportScan] = useState<ImportScanResult | null>(null)
   const [importScanning, setImportScanning] = useState(false)
   const [importError, setImportError] = useState<string | null>(null)
   const [importDone, setImportDone] = useState<number | null>(null)
+  const [importSourceInfo, setImportSourceInfo] = useState('')
   const abis = useAsyncResource(() => listAbis(), [refreshKey, localVersion], [])
 
   useEffect(() => {
@@ -150,9 +160,9 @@ export function AbisPage(_: RouteProps) {
 
   function handleApiEndpointSubmit(event: Event) {
     event.preventDefault()
-    const nextValue = apiUrlDraft.trim() || DEFAULT_ABI_API_URL
+    const nextValue = apiUrlDraft.trim()
     setAbiApiUrl(nextValue)
-    setApiConfigResult(`ABI API endpoint set to ${nextValue}`)
+
   }
 
   async function handleDelete(nextAddress: string) {
@@ -218,6 +228,21 @@ export function AbisPage(_: RouteProps) {
         await upsertAddressLabel(item.address as `0x${string}`, item.name)
       }
 
+      // Store imported code images from build-info.
+      for (const image of importScan.codeImages) {
+        await upsertCodeImage(image)
+      }
+
+      // Store source files
+      for (const file of importScan.sourceFiles) {
+        await upsertSourceFile(file)
+      }
+
+      setImportSourceInfo(
+        importScan.codeImages.length > 0
+          ? ` (${importScan.codeImages.length} code images, ${importScan.sourceFiles.length} source files)`
+          : '',
+      )
       setImportDone(records.length)
       setImportScan(null)
       setLocalVersion((current) => current + 1)
@@ -231,6 +256,7 @@ export function AbisPage(_: RouteProps) {
     setImportScan(null)
     setImportError(null)
     setImportDone(null)
+    setImportSourceInfo('')
   }
 
   const abiItems = [...abis.data].sort((left, right) => right.updatedAt - left.updatedAt)
@@ -327,6 +353,25 @@ export function AbisPage(_: RouteProps) {
         <PageSection
           title="ABI API Endpoint"
           description="The frontend polls this GET endpoint for ABI records. Default is the built-in local endpoint, but any compatible service works."
+          actions={
+            <button
+              type="button"
+              class={`api-toggle ${abiApiUrl ? 'is-active' : ''}`.trim()}
+              onClick={() => {
+                if (abiApiUrl) {
+                  setAbiApiUrl('')
+
+                } else {
+                  const url = apiUrlDraft || DEFAULT_ABI_API_URL
+                  setApiUrlDraft(url)
+                  setAbiApiUrl(url)
+
+                }
+              }}
+              title={abiApiUrl ? 'Disable ABI API polling' : 'Enable ABI API polling'}
+              aria-pressed={!!abiApiUrl}
+            />
+          }
         >
           <form class="stack-form" onSubmit={handleApiEndpointSubmit}>
             <label>
@@ -335,34 +380,29 @@ export function AbisPage(_: RouteProps) {
                 value={apiUrlDraft}
                 onInput={(event) => setApiUrlDraft(event.currentTarget.value)}
                 placeholder={DEFAULT_ABI_API_URL}
+                disabled={!abiApiUrl}
               />
             </label>
-            <div class="button-row">
-              <button type="submit">Save Endpoint</button>
+            <div class="button-row-inline" style={{ marginTop: 8, marginBottom: 12 }}>
+              <button type="submit" disabled={!abiApiUrl}>Save Endpoint</button>
               <button
                 type="button"
+                disabled={!abiApiUrl}
                 onClick={() => {
                   setApiUrlDraft(DEFAULT_ABI_API_URL)
                   setAbiApiUrl(DEFAULT_ABI_API_URL)
-                  setApiConfigResult(`ABI API endpoint reset to ${DEFAULT_ABI_API_URL}`)
+
                 }}
               >
                 Use Default
               </button>
             </div>
           </form>
-          {apiConfigResult && <p class="success-copy">{apiConfigResult}</p>}
-        </PageSection>
-
-        <PageSection title="ABI API Spec" description="Any third-party endpoint can power ABI sync if it implements this contract.">
           <div class="info-panel">
             <p class="muted">
-              Frontend requirement: <code>GET</code> the configured endpoint and return either a bare array or{' '}
-              <code>{`{"records":[...]}`}</code>.
-            </p>
-            <p class="muted">
-              Each record must have <code>address</code>, <code>source</code>, and <code>updatedAt</code>.{' '}
-              <code>label</code> is optional and, when present, becomes the saved contract label in the explorer.
+              <code>GET</code> must return a bare array or <code>{`{"records":[...]}`}</code>.
+              Each record needs <code>address</code>, <code>source</code>, and <code>updatedAt</code>.{' '}
+              <code>label</code> is optional.
             </p>
             <pre class="json-view">{`{
   "records": [
@@ -375,9 +415,8 @@ export function AbisPage(_: RouteProps) {
   ]
 }`}</pre>
             <p class="muted">
-              Optional automation API: if you also want deployment scripts to register ABIs automatically, support{' '}
-              <code>POST</code> on the same endpoint and accept <code>source</code>, <code>abi</code>, or
-              <code>artifact</code> payloads. <code>label</code> is optional on upload.
+              Optional: support <code>POST</code> with <code>source</code>, <code>abi</code>, or{' '}
+              <code>artifact</code> payloads for automated ABI registration from deploy scripts.
             </p>
           </div>
         </PageSection>
@@ -397,7 +436,7 @@ export function AbisPage(_: RouteProps) {
                 <p class="muted">
                   {importDone === 0
                     ? 'No ABIs were imported.'
-                    : `Imported ${importDone} contract ABI${importDone === 1 ? '' : 's'} with labels.`}
+                    : `Imported ${importDone} contract ABI${importDone === 1 ? '' : 's'} with labels.${importSourceInfo}`}
                 </p>
               </div>
               <button type="button" class="modal-close-button" onClick={handleCloseImport} aria-label="Close">
@@ -455,6 +494,10 @@ export function AbisPage(_: RouteProps) {
                   Found {importScan.matched.length + importScan.unmatched.length} contract artifact{importScan.matched.length + importScan.unmatched.length === 1 ? '' : 's'}.
                   {importScan.matched.length > 0 &&
                     ` ${importScan.matched.length} matched to deployed addresses via broadcast files.`}
+                  {importScan.codeImages.length > 0 &&
+                    ` ${importScan.codeImages.length} code image${importScan.codeImages.length === 1 ? '' : 's'} from build-info.`}
+                  {importScan.sourceFiles.length > 0 &&
+                    ` ${importScan.sourceFiles.length} source file${importScan.sourceFiles.length === 1 ? '' : 's'} found for source mapping.`}
                 </p>
               </div>
               <button type="button" class="modal-close-button" onClick={handleCloseImport} aria-label="Close">
@@ -470,6 +513,7 @@ export function AbisPage(_: RouteProps) {
                     <tr>
                       <th>Contract</th>
                       <th>Address</th>
+                      <th>Source</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -477,6 +521,11 @@ export function AbisPage(_: RouteProps) {
                       <tr key={item.address}>
                         <td>{item.name}</td>
                         <td class="mono">{shortenHex(item.address)}</td>
+                        <td>
+                          {item.hasSourceImages
+                            ? <span class="meta-badge meta-status meta-status-success">code image</span>
+                            : <span class="muted">ABI only</span>}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -499,7 +548,14 @@ export function AbisPage(_: RouteProps) {
                   <tbody>
                     {importScan.unmatched.map((item) => (
                       <tr key={item.name}>
-                        <td>{item.name}</td>
+                        <td>
+                          {item.name}
+                          {item.hasSourceImages && (
+                            <span class="meta-badge meta-status meta-status-success" style={{ marginLeft: '8px' }}>
+                              code image
+                            </span>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -513,6 +569,7 @@ export function AbisPage(_: RouteProps) {
               {importScan.matched.length > 0 && (
                 <button type="button" onClick={handleConfirmImport}>
                   Import {importScan.matched.length} ABI{importScan.matched.length === 1 ? '' : 's'}
+                  {importScan.sourceFiles.length > 0 ? ' with source' : ''}
                 </button>
               )}
               <button type="button" onClick={handleCloseImport}>

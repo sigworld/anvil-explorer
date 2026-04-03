@@ -7,17 +7,22 @@ import type {
   AddressLabelRecord,
   BlockRecord,
   ChainMeta,
+  CodeImageRecord,
   DiscoveredAccount,
   DiscoveredContract,
   ExplorerStats,
   LogRecord,
   MetaRecord,
   ReceiptRecord,
+  SourceFileRecord,
+  SourceMapRecord,
   TransactionRecord,
 } from './types.ts'
 
-const DB_NAME = 'anvil-explorer'
-const DB_VERSION = 2
+const LEGACY_DB_NAME = 'anvil-explorer'
+const DB_NAME_PREFIX = 'anvil-explorer::'
+const DB_VERSION = 4
+const KNOWN_SCOPES_STORAGE_KEY = 'anvil-explorer.known-db-scopes'
 const ERC20_TRANSFER_TOPIC =
   '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
@@ -39,6 +44,15 @@ interface ExplorerDbSchema extends DBSchema {
     key: string
     value: AddressLabelRecord
   }
+  codeimages: {
+    key: string
+    value: CodeImageRecord
+    indexes: {
+      contractName: string
+      kind: string
+      sourcePath: string
+    }
+  }
   logs: {
     key: number
     value: LogRecord
@@ -52,6 +66,14 @@ interface ExplorerDbSchema extends DBSchema {
   meta: {
     key: string
     value: MetaRecord
+  }
+  sourcemaps: {
+    key: string
+    value: SourceMapRecord
+  }
+  sources: {
+    key: string
+    value: SourceFileRecord
   }
   receipts: {
     key: string
@@ -72,7 +94,8 @@ interface ExplorerDbSchema extends DBSchema {
   }
 }
 
-let dbPromise: Promise<IDBPDatabase<ExplorerDbSchema>> | undefined
+let activeScopeKey = 'default'
+const dbPromises = new Map<string, Promise<IDBPDatabase<ExplorerDbSchema>>>()
 
 async function collectFromCursor<T>(request: Promise<any>, limit: number) {
   const values: T[] = []
@@ -86,9 +109,51 @@ async function collectFromCursor<T>(request: Promise<any>, limit: number) {
   return values
 }
 
+function getDbName(scopeKey: string) {
+  return `${DB_NAME_PREFIX}${scopeKey}`
+}
+
+function getKnownScopes(): string[] {
+  try {
+    const stored = window.localStorage.getItem(KNOWN_SCOPES_STORAGE_KEY)
+    if (!stored) return []
+    const parsed = JSON.parse(stored)
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string' && v.length > 0) : []
+  } catch {
+    return []
+  }
+}
+
+function rememberScope(scopeKey: string) {
+  const scopes = new Set(getKnownScopes())
+  scopes.add(scopeKey)
+  window.localStorage.setItem(KNOWN_SCOPES_STORAGE_KEY, JSON.stringify([...scopes]))
+}
+
+export function setActiveChainScope(scopeKey: string) {
+  activeScopeKey = scopeKey
+  rememberScope(scopeKey)
+}
+
+export function getActiveChainScope() {
+  return activeScopeKey
+}
+
+async function deleteDatabaseByName(name: string) {
+  await new Promise<void>((resolve, reject) => {
+    const request = window.indexedDB.deleteDatabase(name)
+    request.onsuccess = () => resolve()
+    request.onerror = () => reject(request.error)
+    request.onblocked = () => resolve()
+  })
+}
+
 export async function getDb() {
-  if (!dbPromise) {
-    dbPromise = openDB<ExplorerDbSchema>(DB_NAME, DB_VERSION, {
+  const dbName = getDbName(activeScopeKey)
+  const existing = dbPromises.get(dbName)
+  if (existing) return existing
+
+  const promise = openDB<ExplorerDbSchema>(dbName, DB_VERSION, {
       upgrade(db) {
         if (!db.objectStoreNames.contains('blocks')) {
           const blocks = db.createObjectStore('blocks', { keyPath: 'number' })
@@ -128,14 +193,28 @@ export async function getDb() {
           db.createObjectStore('labels', { keyPath: 'address' })
         }
 
+        if (!db.objectStoreNames.contains('codeimages')) {
+          const codeImages = db.createObjectStore('codeimages', { keyPath: 'id' })
+          codeImages.createIndex('contractName', 'contractName')
+          codeImages.createIndex('kind', 'kind')
+          codeImages.createIndex('sourcePath', 'sourcePath')
+        }
+
         if (!db.objectStoreNames.contains('meta')) {
           db.createObjectStore('meta', { keyPath: 'key' })
         }
+
+        if (!db.objectStoreNames.contains('sourcemaps')) {
+          db.createObjectStore('sourcemaps', { keyPath: 'address' })
+        }
+
+        if (!db.objectStoreNames.contains('sources')) {
+          db.createObjectStore('sources', { keyPath: 'path' })
+        }
       },
     })
-  }
-
-  return dbPromise
+  dbPromises.set(dbName, promise)
+  return promise
 }
 
 export async function putMeta(key: string, value: unknown) {
@@ -957,6 +1036,46 @@ export async function deleteAbi(address: string) {
   await db.delete('abis', address)
 }
 
+export async function getSourceMap(address: string) {
+  const db = await getDb()
+  return db.get('sourcemaps', address)
+}
+
+export async function upsertSourceMap(record: SourceMapRecord) {
+  const db = await getDb()
+  await db.put('sourcemaps', record)
+}
+
+export async function getSourceFile(path: string) {
+  const db = await getDb()
+  return db.get('sources', path)
+}
+
+export async function upsertSourceFile(record: SourceFileRecord) {
+  const db = await getDb()
+  await db.put('sources', record)
+}
+
+export async function listSourceFiles() {
+  const db = await getDb()
+  return db.getAll('sources')
+}
+
+export async function getCodeImage(id: string) {
+  const db = await getDb()
+  return db.get('codeimages', id)
+}
+
+export async function listCodeImages() {
+  const db = await getDb()
+  return db.getAll('codeimages')
+}
+
+export async function upsertCodeImage(record: CodeImageRecord) {
+  const db = await getDb()
+  await db.put('codeimages', record)
+}
+
 export async function getAddressLabel(address: string) {
   const db = await getDb()
   return db.get('labels', address)
@@ -1011,6 +1130,25 @@ export async function resetExplorerData() {
     db.clear('logs'),
     db.clear('abis'),
     db.clear('labels'),
+    db.clear('codeimages'),
     db.clear('meta'),
+    db.clear('sourcemaps'),
+    db.clear('sources'),
   ])
+}
+
+export async function resetAllExplorerData() {
+  const knownDbNames = [...new Set([LEGACY_DB_NAME, ...getKnownScopes().map(getDbName)])]
+
+  const openDbs = await Promise.allSettled([...dbPromises.values()])
+  for (const result of openDbs) {
+    if (result.status === 'fulfilled') {
+      result.value.close()
+    }
+  }
+
+  dbPromises.clear()
+  window.localStorage.removeItem(KNOWN_SCOPES_STORAGE_KEY)
+
+  await Promise.all(knownDbNames.map(deleteDatabaseByName))
 }
