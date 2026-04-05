@@ -4,7 +4,7 @@ import { buildTransactionSummaries } from '../lib/transaction-meta.ts'
 import { useAsyncResource } from '../hooks/use-async-resource.ts'
 import { useExplorer } from '../hooks/use-explorer.tsx'
 import { usePageMeta } from '../hooks/use-page-meta.ts'
-import { normalizeAddress } from '../lib/rpc.ts'
+import { createAnvilClient, normalizeAddress } from '../lib/rpc.ts'
 import {
   AppLink,
   AddressLink,
@@ -97,7 +97,7 @@ function formatTransactionListTimestamp(timestamp: number | null | undefined) {
 
 export function TransactionsPage(_: RouteProps) {
   usePageMeta('Transactions', 'View recent transactions on your local Anvil chain — decoded methods, status, gas costs, and linked accounts.')
-  const { refreshKey } = useExplorer()
+  const { refreshKey, rpcUrl } = useExplorer()
   const accountFilter = normalizeAddress(new URLSearchParams(window.location.search).get('account') ?? '')
   const accountLabel = useAsyncResource(
     async () => (accountFilter ? getResolvedAddressLabel(accountFilter) : null),
@@ -108,8 +108,9 @@ export function TransactionsPage(_: RouteProps) {
     async () =>
       buildTransactionSummaries(
         accountFilter ? await getTransactionsForAccountInvolvement(accountFilter, 100) : await getLatestTransactions(100),
+        createAnvilClient(rpcUrl),
       ),
-    [refreshKey, accountFilter],
+    [refreshKey, accountFilter, rpcUrl],
     [],
   )
 

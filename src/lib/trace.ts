@@ -1,5 +1,7 @@
 import { decodeFunctionData, getAbiItem, getAddress, isAddress, type Abi, type Hex } from 'viem'
 import { getAbi } from './db.ts'
+import { mergeAbis } from './decode.ts'
+import { getProxyImplementation, type AnvilClient } from './rpc.ts'
 import type { RawCallTrace, TraceNode } from './types.ts'
 
 function quantityToString(value: Hex | string | null | undefined) {
@@ -83,7 +85,7 @@ function decodeTraceFunction(input: Hex, abi: Abi | null | undefined) {
   }
 }
 
-async function buildAbiMap(trace: RawCallTrace) {
+async function buildAbiMap(trace: RawCallTrace, client?: AnvilClient) {
   const addresses = new Set<Hex>()
 
   function visit(node: RawCallTrace | undefined) {
@@ -105,7 +107,19 @@ async function buildAbiMap(trace: RawCallTrace) {
   visit(trace)
 
   const entries = await Promise.all(
-    [...addresses].map(async (address) => [address, (await getAbi(address))?.abi ?? null] as const),
+    [...addresses].map(async (address) => {
+      const stored = (await getAbi(address))?.abi ?? null
+
+      if (client) {
+        const implAddr = await getProxyImplementation(client, address).catch(() => null)
+        if (implAddr) {
+          const implAbi = (await getAbi(implAddr))?.abi ?? null
+          return [address, mergeAbis([stored, implAbi])] as const
+        }
+      }
+
+      return [address, stored] as const
+    }),
   )
 
   return new Map<Hex, Abi | null>(entries)
@@ -147,13 +161,13 @@ function normalizeNode(
   }
 }
 
-export async function buildTraceTree(trace: unknown) {
+export async function buildTraceTree(trace: unknown, client?: AnvilClient) {
   const root = trace as RawCallTrace | null
 
   if (!root || typeof root !== 'object') {
     throw new Error('Trace response was empty or invalid')
   }
 
-  const abiMap = await buildAbiMap(root)
+  const abiMap = await buildAbiMap(root, client)
   return normalizeNode(root, abiMap, '0')
 }

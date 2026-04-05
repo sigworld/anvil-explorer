@@ -612,19 +612,22 @@ export async function scanDirectory(dirHandle: FileSystemDirectoryHandle): Promi
   const unmatched: ImportScanResult['unmatched'] = []
 
   for (const artifact of artifacts.values()) {
+    // Re-resolve hasSourceImages — build-info may have been parsed after the artifact.
+    const buildContract = findBuildInfoContract(buildContractsByKey, buildContractsByName, artifact.sourcePath, artifact.name)
+    const hasSourceImages = !!(buildContract?.creation || buildContract?.runtime)
     const address = addressesByName.get(artifact.name)
     if (address) {
       matched.push({
         name: artifact.name,
         address,
         source: artifact.source,
-        hasSourceImages: artifact.hasSourceImages,
+        hasSourceImages,
       })
     } else {
       unmatched.push({
         name: artifact.name,
         source: artifact.source,
-        hasSourceImages: artifact.hasSourceImages,
+        hasSourceImages,
       })
     }
   }

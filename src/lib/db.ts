@@ -1036,6 +1036,16 @@ export async function deleteAbi(address: string) {
   await db.delete('abis', address)
 }
 
+export async function clearAllAbis() {
+  const db = await getDb()
+  await Promise.all([
+    db.clear('abis'),
+    db.clear('codeimages'),
+    db.clear('sourcemaps'),
+    db.clear('sources'),
+  ])
+}
+
 export async function getSourceMap(address: string) {
   const db = await getDb()
   return db.get('sourcemaps', address)

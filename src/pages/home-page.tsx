@@ -53,8 +53,8 @@ export function HomePage(_: RouteProps) {
   const { refreshKey, rpcUrl } = useExplorer()
   const recentBlocks = useAsyncResource(() => getLatestBlocks(8), [refreshKey], [])
   const recentTransactions = useAsyncResource(
-    async () => buildTransactionSummaries(await getLatestTransactions(8)),
-    [refreshKey],
+    async () => buildTransactionSummaries(await getLatestTransactions(8), createAnvilClient(rpcUrl)),
+    [refreshKey, rpcUrl],
     [],
   )
   const recentFailures = useAsyncResource(

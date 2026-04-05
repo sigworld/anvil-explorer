@@ -40,6 +40,8 @@ export function BlockPage(props: RouteProps) {
         return null
       }
 
+      const client = createAnvilClient(rpcUrl)
+
       const [block, transactions] = await Promise.all([
         getBlock(blockNumber),
         getTransactionsByBlock(blockNumber),
@@ -48,12 +50,11 @@ export function BlockPage(props: RouteProps) {
       if (block) {
         return {
           block,
-          transactions: await buildTransactionSummaries(transactions),
+          transactions: await buildTransactionSummaries(transactions, client),
         }
       }
 
       // Block not indexed — fetch from RPC and index it
-      const client = createAnvilClient(rpcUrl)
       try {
         const rpcBlock = await getBlockByNumber(client, blockNumber)
         if (!rpcBlock) {
@@ -72,6 +73,7 @@ export function BlockPage(props: RouteProps) {
           block: storedBlock ?? normalizeBlock(rpcBlock),
           transactions: await buildTransactionSummaries(
             storedTxs.length > 0 ? storedTxs : rpcBlock.transactions.map(normalizeTransaction),
+            client,
           ),
         }
       } catch {

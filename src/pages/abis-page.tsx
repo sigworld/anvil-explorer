@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'preact/hooks'
 import { DEFAULT_ABI_API_URL } from '../lib/abi-api.ts'
 import {
+  clearAllAbis,
   deleteAbi,
   getResolvedAddressLabel,
   listAbis,
@@ -171,6 +172,13 @@ export function AbisPage(_: RouteProps) {
     actions.refresh()
   }
 
+  async function handleClearAll() {
+    if (!confirm('Clear all stored ABIs, code images, and source files?')) return
+    await clearAllAbis()
+    setLocalVersion((current) => current + 1)
+    actions.refresh()
+  }
+
   async function handleCopyAbi(nextAddress: string, nextSource: string) {
     if (!navigator.clipboard) {
       return
@@ -277,6 +285,11 @@ export function AbisPage(_: RouteProps) {
               <button type="button" onClick={openSaveAbiModal}>
                 Upload ABI
               </button>
+              {abis.data.length > 0 && (
+                <button type="button" class="danger-button" onClick={handleClearAll}>
+                  Clear All
+                </button>
+              )}
             </div>
           }
         >
@@ -536,30 +549,13 @@ export function AbisPage(_: RouteProps) {
             {importScan.unmatched.length > 0 && (
               <div>
                 <p class="eyebrow">No deployed address found ({importScan.unmatched.length})</p>
-                <p class="muted">
-                  These artifacts have ABIs but no matching deployment in broadcast/ files. You can upload them individually with a contract address.
-                </p>
-                <table class="data-table">
-                  <thead>
-                    <tr>
-                      <th>Contract</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {importScan.unmatched.map((item) => (
-                      <tr key={item.name}>
-                        <td>
-                          {item.name}
-                          {item.hasSourceImages && (
-                            <span class="meta-badge meta-status meta-status-success" style={{ marginLeft: '8px' }}>
-                              code image
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '4px' }}>
+                  {importScan.unmatched.map((item) => (
+                    <span key={item.name} class="meta-badge" title="No matching deployment in broadcast/ files">
+                      {item.name}
+                    </span>
+                  ))}
+                </div>
               </div>
             )}
 

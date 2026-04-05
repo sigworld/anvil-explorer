@@ -19,7 +19,7 @@ import {
   upsertSourceFile,
 } from '../lib/db.ts'
 import { getDefaultAddressLabel } from '../lib/address-labels.ts'
-import { decodeLog, toAbiRecord } from '../lib/decode.ts'
+import { decodeLog, mergeAbis, toAbiRecord } from '../lib/decode.ts'
 import {
   type BytecodeMatchScanResult,
   isDirectoryPickerSupported,
@@ -35,6 +35,7 @@ import {
   getErc20HolderBalance,
   getErc20TokenInfo,
   getNativeBalance,
+  getProxyImplementation,
   normalizeAddress,
 } from '../lib/rpc.ts'
 import { buildTransactionSummaries } from '../lib/transaction-meta.ts'
@@ -194,6 +195,7 @@ export function AddressPage(props: RouteProps) {
   const [labelResult, setLabelResult] = useState<string | null>(null)
   const [labelError, setLabelError] = useState<string | null>(null)
   const [publicFunctionSortKey, setPublicFunctionSortKey] = useState<PublicFunctionSortKey>('callCount')
+  const [publicFunctionTab, setPublicFunctionTab] = useState<'native' | 'proxied'>('native')
   const [publicFunctionsExpanded, setPublicFunctionsExpanded] = useState(false)
   const [abiCopied, setAbiCopied] = useState(false)
   const [mintRecipient, setMintRecipient] = useState('')
@@ -204,6 +206,7 @@ export function AddressPage(props: RouteProps) {
   const [forgeScanResult, setForgeScanResult] = useState<BytecodeMatchScanResult | null>(null)
   const [forgeSelectedIndex, setForgeSelectedIndex] = useState(0)
   const [forgeError, setForgeError] = useState<string | null>(null)
+  const [abiModalOpen, setAbiModalOpen] = useState(false)
 
   async function handleAbiCopy() {
     if (!resource.data?.abi?.source || !navigator.clipboard) {
@@ -224,7 +227,10 @@ export function AddressPage(props: RouteProps) {
 
       const client = createAnvilClient(rpcUrl)
 
-      const [transactions, logs, abi, kind, nativeBalance, discoveredTokens, tokenInfo, discoveredHolders, discoveredContracts, manualLabel, accountInsight] = await Promise.all([
+      const proxyResolution = getProxyImplementation(client, normalizedAddress as `0x${string}`)
+        .then(impl => impl ? getAbi(impl).then(abi => ({ impl, abi })) : null)
+
+      const [transactions, logs, abi, kind, nativeBalance, discoveredTokens, tokenInfo, discoveredHolders, discoveredContracts, manualLabel, accountInsight, proxyResult] = await Promise.all([
         getTransactionsForAddress(normalizedAddress),
         getLogsForAddress(normalizedAddress),
         getAbi(normalizedAddress),
@@ -236,7 +242,11 @@ export function AddressPage(props: RouteProps) {
         getDiscoveredContracts(500),
         getAddressLabel(normalizedAddress),
         getAccountInsight(normalizedAddress, 10),
+        proxyResolution,
       ])
+
+      const proxyImpl = proxyResult?.impl ?? null
+      const implAbi = proxyResult?.abi ?? null
 
       const tokenBalances = (
         await Promise.all(
@@ -273,6 +283,8 @@ export function AddressPage(props: RouteProps) {
         abi,
         accountInsight,
         contractDiscovery: discoveredContracts.find((item) => item.address === normalizedAddress) ?? null,
+        implAbi,
+        proxyImpl,
         defaultLabel,
         displayLabel: manualLabel?.label ?? defaultLabel,
         kind,
@@ -282,7 +294,7 @@ export function AddressPage(props: RouteProps) {
         tokenBalances,
         tokenHolders,
         tokenInfo,
-        transactions: await buildTransactionSummaries(transactions),
+        transactions: await buildTransactionSummaries(transactions, client),
       }
     },
     [refreshKey, localVersion, normalizedAddress, rpcUrl],
@@ -296,17 +308,31 @@ export function AddressPage(props: RouteProps) {
 
   useEffect(() => {
     setPublicFunctionsExpanded(false)
+    setPublicFunctionTab('native')
   }, [normalizedAddress])
 
   useEffect(() => {
     setAbiCopied(false)
   }, [normalizedAddress])
 
-  const publicContractFunctions =
+  const nativePublicFunctions =
     resource.data?.kind === 'contract'
-      ? getPublicContractFunctions(resource.data.abi?.abi, resource.data.transactions, normalizedAddress)
+      ? getPublicContractFunctions(resource.data.abi?.abi ?? null, resource.data.transactions, normalizedAddress)
       : []
-  const sortedPublicContractFunctions = [...publicContractFunctions].sort((left, right) => {
+  const proxiedPublicFunctions =
+    resource.data?.kind === 'contract' && resource.data.implAbi?.abi
+      ? getPublicContractFunctions(resource.data.implAbi.abi, resource.data.transactions, normalizedAddress)
+      : []
+  const hasNativeFunctions = nativePublicFunctions.length > 0
+  const hasProxiedFunctions = proxiedPublicFunctions.length > 0
+  const activeFunctionTab =
+    publicFunctionTab === 'native' && hasNativeFunctions ? 'native'
+    : publicFunctionTab === 'proxied' && hasProxiedFunctions ? 'proxied'
+    : hasNativeFunctions ? 'native'
+    : hasProxiedFunctions ? 'proxied'
+    : 'native'
+  const activePublicFunctions = activeFunctionTab === 'proxied' ? proxiedPublicFunctions : nativePublicFunctions
+  const sortedPublicContractFunctions = [...activePublicFunctions].sort((left, right) => {
     if (publicFunctionSortKey === 'callCount') {
       const countDelta = right.callCount - left.callCount
 
@@ -387,6 +413,7 @@ export function AddressPage(props: RouteProps) {
 
       setAbiSource('')
       setAbiResult(`Saved ABI for ${normalizedAddress}`)
+      setAbiModalOpen(false)
       setLocalVersion((current) => current + 1)
       actions.refresh()
     } catch (caughtError: unknown) {
@@ -452,6 +479,7 @@ export function AddressPage(props: RouteProps) {
       }
 
       setForgeScanResult(null)
+      setAbiModalOpen(false)
       const parts: string[] = []
       if (candidate.bytecodeMatch) {
         parts.push('exact bytecode match')
@@ -518,6 +546,115 @@ export function AddressPage(props: RouteProps) {
     )
   }
 
+  function closeAbiModal() {
+    setAbiModalOpen(false)
+    setAbiError(null)
+    setForgeError(null)
+  }
+
+  function renderAbiModal() {
+    if (!abiModalOpen || !normalizedAddress) return null
+
+    return (
+      <div class="modal-backdrop" onClick={(event) => { if (event.target === event.currentTarget) closeAbiModal() }}>
+        <div class="modal-dialog">
+          <div class="modal-dialog-header">
+            <h3>Attach ABI</h3>
+            <button type="button" class="modal-close-button section-header-toggle" onClick={closeAbiModal} aria-label="Close">&times;</button>
+          </div>
+          <p class="muted">
+            Attach an ABI to decode contract calls, events, and custom errors for this contract.
+          </p>
+          {forgeScanResult ? (
+            <div class="stack-form">
+              <span class="field-label">
+                {forgeScanResult.candidates.length} matching contract{forgeScanResult.candidates.length === 1 ? '' : 's'} found
+              </span>
+              <div class="forge-match-list">
+                {forgeScanResult.candidates.map((candidate, index) => (
+                  <label
+                    key={candidate.artifactPath}
+                    class={`forge-match-item${index === forgeSelectedIndex ? ' forge-match-item-selected' : ''}`}
+                  >
+                    <input
+                      type="radio"
+                      name="forge-match-modal"
+                      checked={index === forgeSelectedIndex}
+                      onChange={() => setForgeSelectedIndex(index)}
+                    />
+                    <div class="forge-match-info">
+                      <span class="forge-match-name">{candidate.name}</span>
+                      {candidate.sourcePath && (
+                        <span class="forge-match-path muted">{candidate.sourcePath}</span>
+                      )}
+                    </div>
+                    <div class="forge-match-badges">
+                      {candidate.bytecodeMatch && (
+                        <span class="forge-match-badge forge-match-badge-exact">exact</span>
+                      )}
+                      {candidate.hasSourceImages && (
+                        <span class="forge-match-badge forge-match-badge-sources">sources</span>
+                      )}
+                      <span class={`forge-match-score${candidate.matchedSelectors === candidate.totalAbiSelectors ? ' forge-match-score-high' : ''}`}>
+                        {candidate.matchedSelectors}/{candidate.onChainSelectors} selectors
+                      </span>
+                    </div>
+                  </label>
+                ))}
+              </div>
+              {(() => {
+                const selected = forgeScanResult.candidates[forgeSelectedIndex]
+                return selected && selected.hasSourceImages && !selected.bytecodeMatch && selected.compiledBytes > 0 ? (
+                  <div class="forge-mismatch-warning">
+                    <p>
+                      <strong>Bytecode mismatch</strong> — debug tracing requires bytecodes to match exactly.
+                      Your compiled bytecode is {selected.compiledBytes.toLocaleString()} bytes but on-chain
+                      is {selected.onChainBytes.toLocaleString()} bytes.
+                    </p>
+                    <p>
+                      This usually means different <code>optimizer_runs</code> in <code>foundry.toml</code>.
+                      Match the original deployment settings and run <code>forge build --force</code>, then
+                      detect again. The ABI will still be applied for call/event decoding.
+                    </p>
+                  </div>
+                ) : null
+              })()}
+              <div class="button-row button-row-inline">
+                <button type="button" onClick={handleForgeConfirm}>Apply ABI</button>
+                <button type="button" onClick={() => setForgeScanResult(null)}>Back</button>
+              </div>
+              {forgeError && <ErrorState message={forgeError} />}
+            </div>
+          ) : (
+            <form class="stack-form" onSubmit={handleAbiSubmit}>
+              <label>
+                <span class="field-label">ABI JSON</span>
+                <textarea
+                  rows={12}
+                  value={abiSource}
+                  onInput={(event) => setAbiSource(event.currentTarget.value)}
+                  placeholder='[{"type":"function","name":"transfer",...}] or a Forge artifact JSON object'
+                />
+              </label>
+              <div class="button-row button-row-inline">
+                <button type="submit">Save ABI</button>
+                {isDirectoryPickerSupported() && (
+                  <button type="button" onClick={handleForgeDetect} disabled={forgeDetecting}>
+                    {forgeDetecting ? 'Scanning...' : 'Detect from Forge'}
+                  </button>
+                )}
+                <button type="button" onClick={closeAbiModal}>Cancel</button>
+              </div>
+              {abiError && <ErrorState message={abiError} />}
+              {forgeError && <ErrorState message={forgeError} />}
+              <FoundryAbiTips />
+            </form>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   function renderContractLabelActions() {
     if (!resource.data) {
       return null
@@ -530,6 +667,9 @@ export function AddressPage(props: RouteProps) {
         <div class="wallet-label-inline">
           <button type="button" onClick={() => setLabelEditing(true)}>
             {data.manualLabel ? 'Edit label' : 'Add label'}
+          </button>
+          <button type="button" class="section-header-toggle" onClick={() => setAbiModalOpen(true)}>
+            Attach ABI
           </button>
         </div>
       )
@@ -626,7 +766,7 @@ export function AddressPage(props: RouteProps) {
       return null
     }
 
-    const contractAbi = resource.data.abi?.abi
+    const logsAbi = mergeAbis([resource.data.abi?.abi, resource.data.implAbi?.abi])
 
     return (
       <PageSection title="Logs" description="Most recent indexed logs emitted by this address">
@@ -643,7 +783,7 @@ export function AddressPage(props: RouteProps) {
             ]}
           >
             {resource.data.logs.map((log) => {
-              const decoded = contractAbi ? decodeLog(log, contractAbi) : null
+              const decoded = logsAbi.length > 0 ? decodeLog(log, logsAbi) : null
               const topicsText = log.topics.length > 0 ? log.topics.join('\n') : 'n/a'
 
               return (
@@ -842,69 +982,95 @@ export function AddressPage(props: RouteProps) {
                 </>
               )}
 
-              <PageSection title="Public Functions" description="Callable methods derived from the attached ABI">
-                {resource.data.abi ? (
-                  sortedPublicContractFunctions.length > 0 ? (
-                    <>
-                      <div class="contract-function-toolbar">
-                        <div class="function-sort-toggle" aria-label="Sort public functions">
-                          <span class="function-sort-ribbon">Sort</span>
-                          <button
-                            type="button"
-                            class={`function-sort-button ${publicFunctionSortKey === 'name' ? 'is-active' : ''}`.trim()}
-                            onClick={() => setPublicFunctionSortKey('name')}
-                          >
-                            Name
-                          </button>
-                          <button
-                            type="button"
-                            class={`function-sort-button ${publicFunctionSortKey === 'callCount' ? 'is-active' : ''}`.trim()}
-                            onClick={() => setPublicFunctionSortKey('callCount')}
-                          >
-                            Calls
-                          </button>
-                        </div>
-                        <p class="muted contract-function-toolbar-copy">
-                          Format: <code>[call count] functionName(type paramName, ...) [mutability]</code>
-                        </p>
+              <PageSection title="Public Functions" description="Callable methods derived from attached or resolved proxy ABI">
+                {hasNativeFunctions || hasProxiedFunctions ? (
+                  <>
+                    {hasNativeFunctions && hasProxiedFunctions && (
+                      <div class="function-sort-toggle" aria-label="Function source" style={{ marginBottom: '0.5rem' }}>
+                        <button
+                          type="button"
+                          class={`function-sort-button ${activeFunctionTab === 'native' ? 'is-active' : ''}`.trim()}
+                          onClick={() => { setPublicFunctionTab('native'); setPublicFunctionsExpanded(false) }}
+                        >
+                          Native ({nativePublicFunctions.length})
+                        </button>
+                        <button
+                          type="button"
+                          class={`function-sort-button ${activeFunctionTab === 'proxied' ? 'is-active' : ''}`.trim()}
+                          onClick={() => { setPublicFunctionTab('proxied'); setPublicFunctionsExpanded(false) }}
+                        >
+                          Proxied ({proxiedPublicFunctions.length})
+                        </button>
                       </div>
-                      <div class="contract-function-list">
-                        {visiblePublicContractFunctions.map((item) => (
-                          <div class="contract-function-item" key={item.signature}>
-                            <span class="meta-badge contract-function-count">{item.callCount}</span>
-                            <div class="contract-function-signature mono">
-                              {item.params.length > 3 || hasNestedPublicContractParams(item.params) ? (
-                                <div class="contract-function-signature-block">
-                                  <span class="contract-function-signature-line">{item.name}(</span>
-                                  {renderPublicContractFunctionParams(item.params, item.signature)}
-                                  <span class="contract-function-signature-line">)</span>
-                                </div>
-                              ) : (
-                                item.signature
-                              )}
-                            </div>
-                            <span class="meta-badge contract-function-mutability">{item.stateMutability}</span>
+                    )}
+                    {!hasNativeFunctions && hasProxiedFunctions && resource.data.proxyImpl && (
+                      <p class="muted" style={{ marginBottom: '0.5rem' }}>
+                        Showing functions from implementation <AddressLink address={resource.data.proxyImpl} /> (ERC-1967 proxy)
+                      </p>
+                    )}
+                    {activeFunctionTab === 'proxied' && resource.data.proxyImpl && hasNativeFunctions && (
+                      <p class="muted" style={{ marginBottom: '0.5rem' }}>
+                        From implementation <AddressLink address={resource.data.proxyImpl} />
+                      </p>
+                    )}
+                    <div class="contract-function-toolbar">
+                      <div class="function-sort-toggle" aria-label="Sort public functions">
+                        <span class="function-sort-ribbon">Sort</span>
+                        <button
+                          type="button"
+                          class={`function-sort-button ${publicFunctionSortKey === 'name' ? 'is-active' : ''}`.trim()}
+                          onClick={() => setPublicFunctionSortKey('name')}
+                        >
+                          Name
+                        </button>
+                        <button
+                          type="button"
+                          class={`function-sort-button ${publicFunctionSortKey === 'callCount' ? 'is-active' : ''}`.trim()}
+                          onClick={() => setPublicFunctionSortKey('callCount')}
+                        >
+                          Calls
+                        </button>
+                      </div>
+                      <p class="muted contract-function-toolbar-copy">
+                        Format: <code>[call count] functionName(type paramName, ...) [mutability]</code>
+                      </p>
+                    </div>
+                    <div class="contract-function-list">
+                      {visiblePublicContractFunctions.map((item) => (
+                        <div class="contract-function-item" key={item.signature}>
+                          <span class="meta-badge contract-function-count">{item.callCount}</span>
+                          <div class="contract-function-signature mono">
+                            {item.params.length > 3 || hasNestedPublicContractParams(item.params) ? (
+                              <div class="contract-function-signature-block">
+                                <span class="contract-function-signature-line">{item.name}(</span>
+                                {renderPublicContractFunctionParams(item.params, item.signature)}
+                                <span class="contract-function-signature-line">)</span>
+                              </div>
+                            ) : (
+                              item.signature
+                            )}
                           </div>
-                        ))}
-                      </div>
-                      {sortedPublicContractFunctions.length > 3 && (
-                        <div class="contract-function-expand">
-                          <button
-                            type="button"
-                            class="section-header-toggle"
-                            onClick={() => setPublicFunctionsExpanded((current) => !current)}
-                            aria-expanded={publicFunctionsExpanded}
-                          >
-                            {publicFunctionsExpanded
-                              ? 'Show fewer functions'
-                              : `Show ${hiddenPublicFunctionCount} more function${hiddenPublicFunctionCount === 1 ? '' : 's'}`}
-                          </button>
+                          <span class="meta-badge contract-function-mutability">{item.stateMutability}</span>
                         </div>
-                      )}
-                    </>
-                  ) : (
-                    <p class="muted">The attached ABI does not expose any callable functions.</p>
-                  )
+                      ))}
+                    </div>
+                    {sortedPublicContractFunctions.length > 3 && (
+                      <div class="contract-function-expand">
+                        <button
+                          type="button"
+                          class="section-header-toggle"
+                          onClick={() => setPublicFunctionsExpanded((current) => !current)}
+                          aria-expanded={publicFunctionsExpanded}
+                        >
+                          {publicFunctionsExpanded
+                            ? 'Show fewer functions'
+                            : `Show ${hiddenPublicFunctionCount} more function${hiddenPublicFunctionCount === 1 ? '' : 's'}`}
+                        </button>
+                      </div>
+                    )}
+                  </>
+                ) : resource.data.abi ? (
+                  <p class="muted">The attached ABI does not expose any callable functions.</p>
                 ) : (
                   <p class="muted">Attach an ABI to list this contract&apos;s publicly callable functions.</p>
                 )}
@@ -913,11 +1079,11 @@ export function AddressPage(props: RouteProps) {
               <PageSection
                 title="Contract ABI"
                 description="Attach an ABI here to decode contract calls, events, and custom errors for this contract"
-                actions={isDirectoryPickerSupported() ? (
-                  <button type="button" class="section-header-toggle" onClick={handleForgeDetect} disabled={forgeDetecting}>
-                    {forgeDetecting ? 'Scanning...' : 'Detect from Forge'}
+                actions={
+                  <button type="button" class="section-header-toggle" onClick={() => setAbiModalOpen(true)}>
+                    {resource.data.abi ? 'Change ABI' : 'Attach ABI'}
                   </button>
-                ) : undefined}
+                }
               >
                 <div class="contract-abi-summary-row">
                   <KeyValueGrid
@@ -942,22 +1108,17 @@ export function AddressPage(props: RouteProps) {
                     </div>
                   )}
                 </div>
-                <details class="abi-disclosure">
-                  <summary class="abi-disclosure-summary">
-                    <div class="abi-disclosure-copy">
-                      <span class="abi-disclosure-title">
-                        {resource.data.abi ? 'Show attached ABI' : 'Add or paste ABI'}
+                {resource.data.abi && (
+                  <details class="abi-disclosure">
+                    <summary class="abi-disclosure-summary">
+                      <div class="abi-disclosure-copy">
+                        <span class="abi-disclosure-title">Show attached ABI</span>
+                      </div>
+                      <span class="abi-disclosure-chevron" aria-hidden="true">
+                        ›
                       </span>
-                      {!resource.data.abi && (
-                        <span class="muted">Paste a raw ABI array or a Forge artifact JSON object.</span>
-                      )}
-                    </div>
-                    <span class="abi-disclosure-chevron" aria-hidden="true">
-                      ›
-                    </span>
-                  </summary>
-                  <div class="abi-disclosure-body">
-                    {resource.data.abi ? (
+                    </summary>
+                    <div class="abi-disclosure-body">
                       <div class="stack-form">
                         <label>
                           <span class="field-label">Attached ABI</span>
@@ -969,95 +1130,14 @@ export function AddressPage(props: RouteProps) {
                           </button>
                         </div>
                       </div>
-                    ) : (
-                      <>
-                        {forgeScanResult ? (
-                          <div class="stack-form">
-                            <span class="field-label">
-                              {forgeScanResult.candidates.length} matching contract{forgeScanResult.candidates.length === 1 ? '' : 's'} found
-                            </span>
-                            <div class="forge-match-list">
-                              {forgeScanResult.candidates.map((candidate, index) => (
-                                <label
-                                  key={candidate.artifactPath}
-                                  class={`forge-match-item${index === forgeSelectedIndex ? ' forge-match-item-selected' : ''}`}
-                                >
-                                  <input
-                                    type="radio"
-                                    name="forge-match"
-                                    checked={index === forgeSelectedIndex}
-                                    onChange={() => setForgeSelectedIndex(index)}
-                                  />
-                                  <div class="forge-match-info">
-                                    <span class="forge-match-name">{candidate.name}</span>
-                                    {candidate.sourcePath && (
-                                      <span class="forge-match-path muted">{candidate.sourcePath}</span>
-                                    )}
-                                  </div>
-                                  <div class="forge-match-badges">
-                                    {candidate.bytecodeMatch && (
-                                      <span class="forge-match-badge forge-match-badge-exact">exact</span>
-                                    )}
-                                    {candidate.hasSourceImages && (
-                                      <span class="forge-match-badge forge-match-badge-sources">sources</span>
-                                    )}
-                                    <span class={`forge-match-score${candidate.matchedSelectors === candidate.totalAbiSelectors ? ' forge-match-score-high' : ''}`}>
-                                      {candidate.matchedSelectors}/{candidate.onChainSelectors} selectors
-                                    </span>
-                                  </div>
-                                </label>
-                              ))}
-                            </div>
-                            {(() => {
-                              const selected = forgeScanResult.candidates[forgeSelectedIndex]
-                              return selected && selected.hasSourceImages && !selected.bytecodeMatch && selected.compiledBytes > 0 ? (
-                                <div class="forge-mismatch-warning">
-                                  <p>
-                                    <strong>Bytecode mismatch</strong> — debug tracing requires bytecodes to match exactly.
-                                    Your compiled bytecode is {selected.compiledBytes.toLocaleString()} bytes but on-chain
-                                    is {selected.onChainBytes.toLocaleString()} bytes.
-                                  </p>
-                                  <p>
-                                    This usually means different <code>optimizer_runs</code> in <code>foundry.toml</code>.
-                                    Match the original deployment settings and run <code>forge build --force</code>, then
-                                    detect again. The ABI will still be applied for call/event decoding.
-                                  </p>
-                                </div>
-                              ) : null
-                            })()}
-                            <div class="button-row button-row-inline">
-                              <button type="button" onClick={handleForgeConfirm}>
-                                Apply ABI
-                              </button>
-                              <button type="button" onClick={() => setForgeScanResult(null)}>
-                                Cancel
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <form class="stack-form" onSubmit={handleAbiSubmit}>
-                            <label>
-                              <span class="field-label">ABI JSON</span>
-                              <textarea
-                                rows={14}
-                                value={abiSource}
-                                onInput={(event) => setAbiSource(event.currentTarget.value)}
-                                placeholder='[{"type":"function","name":"transfer",...}] or a Forge artifact JSON object'
-                              />
-                            </label>
-                            <button type="submit">Save ABI</button>
-                          </form>
-                        )}
-                        {forgeError && <ErrorState message={forgeError} />}
-                      </>
-                    )}
-                    <FoundryAbiTips />
-                  </div>
-                </details>
+                    </div>
+                  </details>
+                )}
                 {abiResult && <p class="success-copy">{abiResult}</p>}
                 {abiError && <ErrorState message={abiError} />}
               </PageSection>
             </aside>
+            {renderAbiModal()}
           </div>
         ) : (
           <>

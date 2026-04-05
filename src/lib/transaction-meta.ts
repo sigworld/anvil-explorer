@@ -1,5 +1,7 @@
+import type { Abi, Hex } from 'viem'
 import { getAbi, getBlock, getReceipt } from './db.ts'
-import { decodeTransaction } from './decode.ts'
+import { decodeTransaction, mergeAbis } from './decode.ts'
+import { getProxyImplementation, type AnvilClient } from './rpc.ts'
 import type { TransactionRecord, TransactionSummary } from './types.ts'
 
 export type AddressActivitySummary = {
@@ -99,9 +101,23 @@ function classifyKind(transaction: TransactionRecord, method: string | null, sel
   }
 }
 
+type ProxyCache = Map<string, Promise<Hex | null>>
+
+function getCachedProxyImpl(client: AnvilClient, address: string, cache: ProxyCache): Promise<Hex | null> {
+  const key = address.toLowerCase()
+  let pending = cache.get(key)
+  if (!pending) {
+    pending = getProxyImplementation(client, address as Hex)
+    cache.set(key, pending)
+  }
+  return pending
+}
+
 async function buildTransactionSummaryWithTimestamp(
   transaction: TransactionRecord,
   timestamp: number | null,
+  client?: AnvilClient,
+  proxyCache?: ProxyCache,
 ): Promise<TransactionSummary> {
   const selector = getSelector(transaction.input)
   const [receipt, abi] = await Promise.all([
@@ -109,7 +125,18 @@ async function buildTransactionSummaryWithTimestamp(
     transaction.to ? getAbi(transaction.to) : Promise.resolve(undefined),
   ])
 
-  const decoded = abi?.abi ? decodeTransaction(transaction, abi.abi) : null
+  let implAbi: Abi | undefined
+  if (client && transaction.to) {
+    const implAddr = proxyCache
+      ? await getCachedProxyImpl(client, transaction.to, proxyCache)
+      : await getProxyImplementation(client, transaction.to as Hex)
+    if (implAddr) {
+      implAbi = (await getAbi(implAddr))?.abi
+    }
+  }
+
+  const effectiveAbi = mergeAbis([abi?.abi, implAbi])
+  const decoded = effectiveAbi.length > 0 ? decodeTransaction(transaction, effectiveAbi) : null
   const classified = classifyKind(transaction, decoded?.functionName ?? null, selector)
 
   return {
@@ -128,14 +155,14 @@ async function buildTransactionSummaryWithTimestamp(
   }
 }
 
-export async function buildTransactionSummary(transaction: TransactionRecord): Promise<TransactionSummary> {
+export async function buildTransactionSummary(transaction: TransactionRecord, client?: AnvilClient): Promise<TransactionSummary> {
   const block =
     typeof transaction.blockNumber === 'number' ? await getBlock(transaction.blockNumber) : undefined
 
-  return buildTransactionSummaryWithTimestamp(transaction, block?.timestamp ?? null)
+  return buildTransactionSummaryWithTimestamp(transaction, block?.timestamp ?? null, client)
 }
 
-export async function buildTransactionSummaries(transactions: TransactionRecord[]) {
+export async function buildTransactionSummaries(transactions: TransactionRecord[], client?: AnvilClient) {
   const blockNumbers = [...new Set(transactions.map((transaction) => transaction.blockNumber).filter((value): value is number => typeof value === 'number'))]
   const blocks = await Promise.all(blockNumbers.map((blockNumber) => getBlock(blockNumber)))
   const blockTimestampByNumber = new Map(
@@ -144,6 +171,8 @@ export async function buildTransactionSummaries(transactions: TransactionRecord[
       .map((block) => [block.number, block.timestamp] as const),
   )
 
+  const proxyCache: ProxyCache = new Map()
+
   return Promise.all(
     transactions.map(async (transaction) => {
       const timestamp =
@@ -151,7 +180,7 @@ export async function buildTransactionSummaries(transactions: TransactionRecord[
           ? blockTimestampByNumber.get(transaction.blockNumber) ?? null
           : null
 
-      return buildTransactionSummaryWithTimestamp(transaction, timestamp)
+      return buildTransactionSummaryWithTimestamp(transaction, timestamp, client, proxyCache)
     }),
   )
 }

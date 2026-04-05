@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { decodeEventLog, decodeErrorResult, decodeFunctionResult, getAbiItem, parseAbi } from 'viem'
 import type { Abi, Hex } from 'viem'
-import { getResolvedAddressLabel, listAbis, listCodeImages, listSourceFiles } from '../lib/db.ts'
+import { getAbi, getResolvedAddressLabel, listAbis, listCodeImages, listSourceFiles } from '../lib/db.ts'
+import { mergeAbis } from '../lib/decode.ts'
+import { createAnvilClient, getProxyImplementation } from '../lib/rpc.ts'
 import { useExplorer } from '../hooks/use-explorer.tsx'
 import { formatNumber } from '../lib/format.ts'
 import { buildSourceTraceModel } from '../lib/trace-source.ts'
@@ -827,7 +829,7 @@ function StackTraceRow(props: {
 // ---------------------------------------------------------------------------
 
 export function StackTraceView({ trace, opcodeTrace, opcodeLoading, onRequestOpcodeTrace, loadRuntimeCode, initialFullTrace, embedded, onEntrySelect }: Props) {
-  const { refreshKey } = useExplorer()
+  const { refreshKey, rpcUrl } = useExplorer()
   const [labelMap, setLabelMap] = useState<LabelMap>(new Map())
   const [abiMap, setAbiMap] = useState<Map<string, Abi>>(new Map())
   const [steps, setSteps] = useState<TraceStepLocation[] | null>(null)
@@ -925,6 +927,21 @@ export function StackTraceView({ trace, opcodeTrace, opcodeLoading, onRequestOpc
       for (const record of abiRecords) {
         nextAbiMap.set(record.address.toLowerCase(), record.abi)
       }
+
+      // Resolve proxy implementations and merge ABIs for addresses in the trace
+      const client = createAnvilClient(rpcUrl)
+      await Promise.all(
+        [...addresses].map(async (addr) => {
+          const implAddr = await getProxyImplementation(client, addr as `0x${string}`).catch(() => null)
+          if (implAddr) {
+            const implRecord = await getAbi(implAddr)
+            if (implRecord) {
+              const existing = nextAbiMap.get(addr.toLowerCase())
+              nextAbiMap.set(addr.toLowerCase(), mergeAbis([existing, implRecord.abi]))
+            }
+          }
+        }),
+      )
 
       const sources = await listSourceFiles()
 

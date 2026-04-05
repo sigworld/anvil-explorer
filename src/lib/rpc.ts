@@ -386,6 +386,35 @@ export async function getStorageAt(client: AnvilClient, address: Hex, slot: Hex)
   return rpcRequest<Hex>(client, 'eth_getStorageAt', [address, slot, 'latest'])
 }
 
+const ERC1967_IMPLEMENTATION_SLOT = '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc' as Hex
+const ERC1967_BEACON_SLOT = '0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50' as Hex
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
+
+function addressFromSlot(slot: Hex): Hex {
+  return ('0x' + slot.slice(26)) as Hex
+}
+
+export async function getProxyImplementation(client: AnvilClient, address: Hex): Promise<Hex | null> {
+  try {
+    const implAddr = addressFromSlot(await getStorageAt(client, address, ERC1967_IMPLEMENTATION_SLOT))
+    if (implAddr !== ZERO_ADDRESS) {
+      return getAddress(implAddr)
+    }
+
+    const beaconAddr = addressFromSlot(await getStorageAt(client, address, ERC1967_BEACON_SLOT))
+    if (beaconAddr !== ZERO_ADDRESS) {
+      const beaconImplAddr = addressFromSlot(await getStorageAt(client, getAddress(beaconAddr) as Hex, ERC1967_IMPLEMENTATION_SLOT))
+      if (beaconImplAddr !== ZERO_ADDRESS) {
+        return getAddress(beaconImplAddr)
+      }
+    }
+
+    return null
+  } catch {
+    return null
+  }
+}
+
 export async function dealErc20(
   client: AnvilClient,
   tokenAddress: string,

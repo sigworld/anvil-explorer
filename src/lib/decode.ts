@@ -98,6 +98,24 @@ export function decodeTransaction(transaction: TransactionRecord, abi: Abi | nul
   }
 }
 
+export function mergeAbis(abis: Array<Abi | null | undefined>): Abi {
+  const merged: Abi[number][] = []
+  const seen = new Set<string>()
+
+  for (const abi of abis) {
+    if (!abi) continue
+    for (const item of abi) {
+      const key = JSON.stringify(item)
+      if (!seen.has(key)) {
+        seen.add(key)
+        merged.push(item)
+      }
+    }
+  }
+
+  return merged as Abi
+}
+
 export function decodeLog(log: LogRecord, abi: Abi | null | undefined): DecodedEvent | null {
   if (!abi || !log.topic0 || !log.txHash) {
     return null

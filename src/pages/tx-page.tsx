@@ -2,7 +2,7 @@ import { DebugTraceView } from '../components/debug-trace-view.tsx'
 import { StackTraceView } from '../components/stack-trace-view.tsx'
 import type { ComponentChildren } from 'preact'
 import { useEffect, useRef, useState } from 'preact/hooks'
-import { decodeLog, decodeTransaction, toAbiRecord } from '../lib/decode.ts'
+import { decodeLog, decodeTransaction, mergeAbis, toAbiRecord } from '../lib/decode.ts'
 import {
   getAbi,
   getLogsByTxHash,
@@ -35,6 +35,7 @@ import {
   getAddressKind,
   getBlockByNumber,
   getCode,
+  getProxyImplementation,
   getReceiptByHash,
   getTransactionByHash,
 } from '../lib/rpc.ts'
@@ -301,7 +302,8 @@ export function TxPage(props: RouteProps) {
       },
       async () => {
         const raw = await actions.loadTrace(props.hash as `0x${string}`)
-        const tree = await buildTraceTree(raw)
+        const client = createAnvilClient(rpcUrl)
+        const tree = await buildTraceTree(raw, client)
         return { raw, tree }
       },
       'Trace request failed',
@@ -381,16 +383,20 @@ export function TxPage(props: RouteProps) {
       }
 
       const client = createAnvilClient(rpcUrl)
-      const summary = await buildTransactionSummary(transaction)
+      const summary = await buildTransactionSummary(transaction, client)
 
-      const [toAbi, createdAbi, fromKind, toKind] = await Promise.all([
+      const [toAbi, createdAbi, fromKind, toKind, implAbi] = await Promise.all([
         transaction.to ? getAbi(transaction.to) : Promise.resolve(undefined),
         receipt?.contractAddress ? getAbi(receipt.contractAddress) : Promise.resolve(undefined),
         getAddressKind(client, transaction.from),
         transaction.to ? getAddressKind(client, transaction.to) : Promise.resolve(null),
+        transaction.to
+          ? getProxyImplementation(client, transaction.to as `0x${string}`).then(impl => impl ? getAbi(impl) : null)
+          : Promise.resolve(null),
       ])
 
-      const contractAbi = toAbi?.abi ?? createdAbi?.abi ?? null
+      const merged = mergeAbis([toAbi?.abi, createdAbi?.abi, implAbi?.abi])
+      const contractAbi = merged.length > 0 ? merged : null
       const failure =
         receipt?.status === '0' ? await inspectTransactionFailure(client, transaction, contractAbi) : null
       const tokenEffects = await buildTokenBalanceEffects(client, logs, transaction.blockNumber)
