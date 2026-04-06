@@ -200,9 +200,9 @@ export function ExplorerProvider(props: { children: ComponentChildren }) {
   const startBlock = activeEndpoint.startBlock
   const activeScopeKey = createEndpointScopeKey(activeEndpoint)
 
-  useEffect(() => {
-    setActiveChainScope(activeScopeKey)
-  }, [activeScopeKey])
+  // Set chain scope synchronously so child components' effects (e.g. useAsyncResource)
+  // query the correct IndexedDB on the very first render — not one tick later.
+  setActiveChainScope(activeScopeKey)
 
   useEffect(() => {
     window.localStorage.setItem(ENDPOINTS_STORAGE_KEY, JSON.stringify(endpoints))

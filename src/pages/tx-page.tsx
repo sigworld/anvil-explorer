@@ -983,6 +983,7 @@ export function TxPage(props: RouteProps) {
                 <DebugTraceView
                   trace={opcodeTrace}
                   callTree={trace}
+                  txHash={props.hash as `0x${string}` | undefined}
                   loadRuntimeCode={async (address) => {
                     const client = createAnvilClient(rpcUrl)
                     return getCode(

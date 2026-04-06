@@ -143,6 +143,7 @@ type Props = {
   trace: OpcodeTrace
   callTree: TraceNode
   loadRuntimeCode: (address: Hex) => Promise<Hex>
+  txHash?: Hex | null
 }
 
 type FrameEntry = {
@@ -299,7 +300,7 @@ function findFailureFocus(flatFrames: TraceFrame[], frameEntryMap: Map<string, F
   }
 }
 
-export function DebugTraceView({ trace, callTree, loadRuntimeCode }: Props) {
+export function DebugTraceView({ trace, callTree, loadRuntimeCode, txHash }: Props) {
   const { refreshKey } = useExplorer()
   const [codeImages, setCodeImages] = useState<CodeImageRecord[]>([])
   const [frames, setFrames] = useState<TraceFrame[]>([])
@@ -823,19 +824,19 @@ export function DebugTraceView({ trace, callTree, loadRuntimeCode }: Props) {
               <FrameInputCard frame={selectedFrame} />
               <FrameResultCard frame={selectedFrame} />
 
-              {/* Row 2: opcode | stack | storage diff */}
+              {/* Row 2: opcode | stack | storage */}
               <OpcodeCard entry={selectedTraceEntry} stackDiff={stackDiff} />
               <div class="insp-cell insp-card-scroll"><StackCard stack={selectedTraceEntry?.stack} /></div>
-              <StorageDiffCard diffs={storageDiff} />
+              <div class="insp-cell insp-card-scroll"><StorageCard slots={currentStorageDecoded} contractAddress={selectedFrame?.to ?? selectedFrame?.contextAddress ?? null} txHash={txHash} /></div>
 
-              {/* Row 3: return | memory | storage */}
+              {/* Row 3: return | memory | storage diff */}
               <ReturnDataCard
                 entry={selectedTraceEntry}
                 returnPayload={returnPayload}
                 frameOutput={selectedFrame.output}
               />
               <div class="insp-cell insp-card-scroll"><MemoryCard memory={selectedTraceEntry?.memory} /></div>
-              <div class="insp-cell insp-card-scroll"><StorageCard slots={currentStorageDecoded} /></div>
+              <StorageDiffCard diffs={storageDiff} />
 
               {/* Row 4: failure | children | ast */}
               <FailureFocusCard

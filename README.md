@@ -72,6 +72,26 @@ The fastest way to load ABIs. On the **ABIs** page, click **Import from Forge** 
 
 Contracts found in artifacts but without a matching deployment are listed separately so you can assign an address manually.
 
+For the best experience, configure your Forge project to emit build info, source maps, and storage layouts. Add this to your `foundry.toml`:
+
+```toml
+[profile.default]
+build_info = true
+ffi = true
+ast = true
+extra_output = [
+  "metadata",
+  "ir",
+  "irOptimized",
+  "storageLayout",
+  "devdoc",
+  "userdoc",
+  "evm.assembly"
+]
+```
+
+This ensures the explorer has everything it needs for full calldata decoding, source-mapped stack traces, and the stepping debugger.
+
 ### ABI API (auto-sync)
 
 The explorer polls an ABI endpoint and automatically imports new or updated ABIs. A built-in local endpoint at `/api/abis` works out of the box — push ABIs to it from deployment scripts:

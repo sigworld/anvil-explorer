@@ -1,8 +1,9 @@
-import { decodeLog } from '../lib/decode.ts'
+import { decodeLog, mergeAbis } from '../lib/decode.ts'
 import { getAbi, getBlock, getRecentLogs } from '../lib/db.ts'
 import { formatTimestamp } from '../lib/format.ts'
 import { useAsyncResource } from '../hooks/use-async-resource.ts'
 import { useExplorer } from '../hooks/use-explorer.tsx'
+import { createAnvilClient, getProxyImplementation } from '../lib/rpc.ts'
 import { AddressLink, BlockLink, EmptyState, ErrorState, LoadingState, LogDecodePopup, PageSection, SummaryTable, TxLink } from '../components/common.tsx'
 import { usePageMeta } from '../hooks/use-page-meta.ts'
 
@@ -10,23 +11,29 @@ type RouteProps = { path?: string }
 
 export function LogsPage(_: RouteProps) {
   usePageMeta('Logs', 'Browse emitted event logs from your local Anvil chain with ABI-decoded topics and data.')
-  const { refreshKey } = useExplorer()
+  const { refreshKey, rpcUrl } = useExplorer()
   const logs = useAsyncResource(async () => {
     const records = await getRecentLogs(100)
     const uniqueAddresses = [...new Set(records.map((log) => log.address))]
     const uniqueBlockNumbers = [...new Set(records.map((log) => log.blockNumber).filter((value): value is number => typeof value === 'number'))]
 
-    const [abiEntries, blockEntries] = await Promise.all([
+    const client = createAnvilClient(rpcUrl)
+    const [abiEntries, implAbiEntries, blockEntries] = await Promise.all([
       Promise.all(uniqueAddresses.map(async (address) => [address, (await getAbi(address))?.abi ?? null] as const)),
+      Promise.all(uniqueAddresses.map(async (address) => {
+        const impl = await getProxyImplementation(client, address as `0x${string}`)
+        return [address, impl ? ((await getAbi(impl))?.abi ?? null) : null] as const
+      })),
       Promise.all(uniqueBlockNumbers.map(async (blockNumber) => [blockNumber, await getBlock(blockNumber)] as const)),
     ])
 
-    const abiMap = new Map(abiEntries)
+    const directAbiMap = new Map(abiEntries)
+    const implAbiMap = new Map(implAbiEntries)
     const blockMap = new Map(blockEntries)
 
     return records.map((log) => ({
       ...log,
-      decoded: decodeLog(log, abiMap.get(log.address) ?? null),
+      decoded: decodeLog(log, mergeAbis([directAbiMap.get(log.address), implAbiMap.get(log.address)])),
       timestamp: log.blockNumber === null ? null : (blockMap.get(log.blockNumber)?.timestamp ?? null),
     }))
   }, [refreshKey], [])

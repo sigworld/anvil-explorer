@@ -1,9 +1,13 @@
-import { useState } from 'preact/hooks'
+import { useCallback, useState } from 'preact/hooks'
 import type { ComponentChildren } from 'preact'
+import type { Hex } from 'viem'
 import type { DecodedStep } from '../lib/step-decode.ts'
 import type { DecodedStorageSlot } from '../lib/storage-decode.ts'
+import { decodeStepStorage } from '../lib/storage-decode.ts'
 import type { StepAstContext, TraceFrame } from '../lib/types.ts'
 import { formatNumber } from '../lib/format.ts'
+import { useExplorer } from '../hooks/use-explorer.tsx'
+import { createAnvilClient, getFullContractStorage } from '../lib/rpc.ts'
 
 // ---------------------------------------------------------------------------
 // Shared primitives
@@ -87,10 +91,10 @@ function EmptyNote({ text }: { text: string }) {
   return <span class="insp-empty">{text}</span>
 }
 
-function CardShell({ label, accent, children }: { label: string; accent?: 'danger' | 'warning' | 'info' | 'success'; children: ComponentChildren }) {
+function CardShell({ label, accent, labelExtra, children }: { label: string; accent?: 'danger' | 'warning' | 'info' | 'success'; labelExtra?: ComponentChildren; children: ComponentChildren }) {
   return (
     <div class={`insp-card ${accent ? `insp-card-${accent}` : ''}`}>
-      <span class="insp-card-label">{label}</span>
+      <span class="insp-card-label">{label}{labelExtra}</span>
       {children}
     </div>
   )
@@ -352,27 +356,81 @@ export function MemoryCard({ memory }: { memory: string[] | undefined }) {
 // Card: Storage access
 // ---------------------------------------------------------------------------
 
-export function StorageCard({ slots }: { slots: DecodedStorageSlot[] }) {
-  if (slots.length === 0) return <CardShell label="Storage"><EmptyNote text="no access" /></CardShell>
+export function StorageCard({ slots, contractAddress, txHash }: {
+  slots: DecodedStorageSlot[]
+  contractAddress?: Hex | null
+  txHash?: Hex | null
+}) {
+  const { rpcUrl } = useExplorer()
+  const [fullStorage, setFullStorage] = useState<DecodedStorageSlot[] | null>(null)
+  const [showingFull, setShowingFull] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const displaySlots = showingFull && fullStorage ? fullStorage : slots
+  const canFetchFull = !!contractAddress && !!txHash
+
+  const handleFetchFull = useCallback(async () => {
+    if (!contractAddress || !txHash) return
+    // Toggle off
+    if (showingFull) { setShowingFull(false); return }
+    // Already cached — just show it
+    if (fullStorage) { setShowingFull(true); return }
+    // Fetch
+    setLoading(true)
+    setError(null)
+    try {
+      const client = createAnvilClient(rpcUrl)
+      const raw = await getFullContractStorage(client, txHash, contractAddress as Hex)
+      setFullStorage(decodeStepStorage(raw, null))
+      setShowingFull(true)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch storage')
+    } finally {
+      setLoading(false)
+    }
+  }, [contractAddress, txHash, rpcUrl, showingFull, fullStorage])
+
+  const label = showingFull && fullStorage
+    ? `Storage — full (${displaySlots.length})`
+    : displaySlots.length === 0 ? 'Storage' : `Storage (${displaySlots.length})`
+
+  const labelAction = canFetchFull ? (
+    <button
+      class="insp-storage-full-btn"
+      onClick={handleFetchFull}
+      disabled={loading}
+      title={showingFull ? 'Show step storage' : 'Inspect full contract storage'}
+    >
+      {loading ? '…' : showingFull ? 'step' : 'full'}
+    </button>
+  ) : undefined
+
   return (
-    <CardShell label={`Storage (${slots.length})`}>
-      <div class="insp-storage-table">
-        <div class="insp-storage-head">
-          <span>Variable</span>
-          <span>Value</span>
-        </div>
-        {slots.map((slot, i) => (
-          <div key={i} class="insp-storage-row">
-            <span class="insp-storage-label">
-              <span class="insp-storage-name">{slot.label}</span>
-              <span class="insp-storage-type mono muted">{slot.typeName !== 'unknown' ? slot.typeName : ''}</span>
-            </span>
-            <span class="insp-storage-value">
-              <HexValue value={slot.rawValue} />
-            </span>
+    <CardShell label={label} labelExtra={labelAction}>
+      {error && <span class="mono" style="color:var(--red);font-size:11px;padding:2px 6px">{error}</span>}
+      {displaySlots.length === 0
+        ? <EmptyNote text="no access" />
+        : (
+          <div class="insp-storage-table">
+            <div class="insp-storage-head">
+              <span>Variable</span>
+              <span>Value</span>
+            </div>
+            {displaySlots.map((slot, i) => (
+              <div key={i} class="insp-storage-row">
+                <span class="insp-storage-label">
+                  <span class="insp-storage-name">{slot.label}</span>
+                  <span class="insp-storage-type mono muted">{slot.typeName !== 'unknown' ? slot.typeName : ''}</span>
+                </span>
+                <span class="insp-storage-value">
+                  <HexValue value={slot.rawValue} />
+                </span>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+        )
+      }
     </CardShell>
   )
 }

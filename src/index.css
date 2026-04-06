@@ -4907,7 +4907,6 @@ code,
   pointer-events: none;
   line-height: 1.4;
 }
-
 /* Row: label + value */
 .insp-row {
   display: grid;
@@ -5188,6 +5187,32 @@ code,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Storage full-inspect button */
+.insp-storage-full-btn {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  font-size: 0.58rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  line-height: 1.5;
+  color: var(--accent);
+  background: rgba(128, 128, 128, 0.12);
+  border: 1px solid rgba(128, 128, 128, 0.2);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  pointer-events: auto;
+  vertical-align: middle;
+}
+.insp-storage-full-btn:hover {
+  background: rgba(128, 128, 128, 0.22);
+}
+.insp-storage-full-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 /* Storage table */

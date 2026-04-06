@@ -15,6 +15,7 @@ import type {
   AddressKind,
   Erc20TokenInfo,
   ForkConfig,
+  OpcodeEntry,
   OpcodeTrace,
   TokenBalance,
   TokenHolderBalance,
@@ -204,6 +205,54 @@ export type OpcodeTraceOptions = {
   enableStorage?: boolean
 }
 
+/**
+ * When Anvil returns empty/null storage fields in structLogs, derive cumulative
+ * storage state from SSTORE and SLOAD opcodes by reading their stack arguments.
+ * Mutates entries in place, only filling in entries that lack storage data.
+ */
+function deriveStorageFromOpcodes(entries: OpcodeEntry[]) {
+  // If the RPC already provided storage data, leave it alone.
+  if (entries.some((e) => e.storage && Object.keys(e.storage).length > 0)) return
+
+  // Per-depth cumulative storage map (depth → slot → value).
+  const storageByDepth = new Map<number, Record<string, string>>()
+  let prevDepth = 0
+
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i]
+
+    // When returning to a shallower depth, drop deeper maps
+    if (entry.depth < prevDepth) {
+      for (const d of [...storageByDepth.keys()]) {
+        if (d > entry.depth) storageByDepth.delete(d)
+      }
+    }
+    prevDepth = entry.depth
+
+    const { op, stack } = entry
+    if (op !== 'SSTORE' && op !== 'SLOAD') continue
+
+    if (!storageByDepth.has(entry.depth)) {
+      storageByDepth.set(entry.depth, {})
+    }
+    const map = storageByDepth.get(entry.depth)!
+
+    if (op === 'SSTORE' && stack.length >= 2) {
+      map[stack[stack.length - 1]] = stack[stack.length - 2]
+    } else if (op === 'SLOAD' && stack.length >= 1) {
+      const slot = stack[stack.length - 1]
+      const next = i + 1 < entries.length ? entries[i + 1] : null
+      if (next && next.depth === entry.depth && next.stack.length >= 1) {
+        map[slot] = next.stack[next.stack.length - 1]
+      } else if (!(slot in map)) {
+        map[slot] = '0x0'
+      }
+    }
+
+    entry.storage = { ...map }
+  }
+}
+
 export async function getOpcodeTrace(client: AnvilClient, txHash: Hex, options?: OpcodeTraceOptions): Promise<OpcodeTrace> {
   const enableStorage = options?.enableStorage ?? false
 
@@ -230,6 +279,10 @@ export async function getOpcodeTrace(client: AnvilClient, txHash: Hex, options?:
         storage: entry.storage ?? undefined,
         returnData: toOptionalHex(entry.returnData ?? null),
       }))
+
+      if (enableStorage) {
+        deriveStorageFromOpcodes(entries)
+      }
 
       return {
         totalGas: toNumberQuantity(result.gas) || entries.reduce((sum, entry) => sum + entry.gasCost, 0),
@@ -384,6 +437,37 @@ export async function setStorageAt(client: AnvilClient, address: Hex, slot: Hex,
 
 export async function getStorageAt(client: AnvilClient, address: Hex, slot: Hex): Promise<Hex> {
   return rpcRequest<Hex>(client, 'eth_getStorageAt', [address, slot, 'latest'])
+}
+
+type PrestateResult = Record<string, {
+  balance?: string
+  nonce?: number
+  code?: string
+  storage?: Record<string, string>
+}>
+
+/**
+ * Fetch all storage slots for a contract using the prestateTracer.
+ * Returns the post-state storage for the given address after the transaction.
+ */
+export async function getFullContractStorage(
+  client: AnvilClient,
+  txHash: Hex,
+  address: Hex,
+): Promise<Record<string, string>> {
+  const result = await rpcRequest<PrestateResult>(client, 'debug_traceTransaction', [
+    txHash,
+    { tracer: 'prestateTracer', tracerConfig: { diffMode: false } },
+  ])
+
+  const normalizedTarget = address.toLowerCase()
+  for (const [addr, state] of Object.entries(result)) {
+    if (addr.toLowerCase() === normalizedTarget && state.storage) {
+      return state.storage
+    }
+  }
+
+  return {}
 }
 
 const ERC1967_IMPLEMENTATION_SLOT = '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc' as Hex
