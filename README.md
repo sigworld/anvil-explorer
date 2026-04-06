@@ -1,6 +1,6 @@
 # Anvil Explorer
 
-A browser-based block explorer for local Foundry `anvil` chains. Indexes chain data into IndexedDB and gives you a full inspection UI — blocks, transactions, contracts, logs, token activity, execution traces, and source-level debugging — without leaving your browser.
+A browser-based block explorer for local Foundry `anvil` chains. Indexes chain data into IndexedDB and provides a full inspection UI — blocks, transactions, contracts, logs, token activity, execution traces, and source-level debugging — entirely in the browser.
 
 **Try it now: [anvilscan.sigworld.io](https://anvilscan.sigworld.io)**
 
@@ -36,9 +36,9 @@ When connected to a forked Anvil instance, the explorer automatically:
 
 - Detects the fork origin and block number (shown in the sidebar)
 - Indexes only blocks created after the fork — no attempt to sync millions of historical blocks
-- Fetches pre-fork blocks live from the origin RPC when you navigate to them (marked with a banner)
+- Fetches pre-fork blocks live from the origin RPC on navigation (marked with a banner)
 
-You can also set a custom **Start Block** on the **Config** page to narrow the indexing window further, even on non-forked chains.
+A custom **Start Block** can be set on the **Config** page to narrow the indexing window further, even on non-forked chains.
 
 ## Token Minting
 
@@ -50,7 +50,7 @@ From the **Config** page, use **Mint Native Token** to add ETH to any address. T
 
 Use **Mint ERC20 Token** on the **Config** page to deal arbitrary ERC-20 tokens to any address. Enter the token contract address, click **Lookup** to auto-detect decimals and symbol, then specify the recipient and amount.
 
-This also works inline from the **Token Metadata** sidebar on any ERC-20 contract's address page — useful when you're already inspecting a token.
+This also works inline from the **Token Metadata** sidebar on any ERC-20 contract's address page — useful when already inspecting a token.
 
 Under the hood, the explorer brute-forces the `balanceOf` storage slot (Solidity and Vyper mapping layouts, slots 0–19) and writes via `anvil_setStorageAt`. Works with standard token implementations; exotic storage layouts may not be supported.
 
@@ -68,11 +68,11 @@ ABIs unlock decoded calldata, event logs, and custom error messages across the e
 
 ### Import from Forge
 
-The fastest way to load ABIs. On the **ABIs** page, click **Import from Forge** and select your Forge project root (or the `out/` directory). The explorer scans `out/` for compiled artifacts and cross-references `broadcast/` files to match each contract to its deployed address — then imports everything in one step, including code images and source files for execution tracing.
+The fastest way to load ABIs. On the **ABIs** page, click **Import from Forge** and select the Forge project root (or the `out/` directory). The explorer scans `out/` for compiled artifacts and cross-references `broadcast/` files to match each contract to its deployed address — then imports everything in one step, including code images and source files for execution tracing.
 
-Contracts found in artifacts but without a matching deployment are listed separately so you can assign an address manually.
+Contracts found in artifacts but without a matching deployment are listed separately so an address can be assigned manually.
 
-For the best experience, configure your Forge project to emit build info, source maps, and storage layouts. Add this to your `foundry.toml`:
+For the best experience, the Forge project should be configured to emit build info, source maps, and storage layouts. Add this to `foundry.toml`:
 
 ```toml
 [profile.default]
@@ -102,11 +102,11 @@ curl -X POST http://127.0.0.1:7777/api/abis \
   -d '{"address":"0x5Fb...aa3","label":"Token","artifact":{"abi":[...]}}'
 ```
 
-You can also point the explorer at your own service. Configure the endpoint URL on the **ABIs** page or set `VITE_ABI_API_URL` at build time. Toggle polling on or off with the pill switch in the section header. See [API.md](./API.md) for the full endpoint spec.
+The explorer can also point at a custom service. The endpoint URL is configurable on the **ABIs** page or via `VITE_ABI_API_URL` at build time. Polling can be toggled on or off with the pill switch in the section header. See [API.md](./API.md) for the full endpoint spec.
 
 ### Manual upload
 
-As a fallback, you can paste an ABI directly from the **ABIs** page, a **contract address** page, or a **transaction** page. Accepts a raw ABI JSON array or a full Forge artifact JSON. You can also attach a human-readable **label** so the UI shows a contract name instead of just the address.
+As a fallback, ABIs can be pasted directly from the **ABIs** page, a **contract address** page, or a **transaction** page. Accepts a raw ABI JSON array or a full Forge artifact JSON. A human-readable **label** can also be attached so the UI shows a contract name instead of just the address.
 
 ### What gets decoded
 
