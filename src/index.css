@@ -1679,215 +1679,97 @@ button.link-button:hover {
   border-color: hsl(var(--tx-method-hue, 220) 38% 28%);
 }
 
-.account-insight-graph-wrap {
+/* --- Shared Relation Graph (used by address insight + tx interactions) --- */
+
+/* --- Relation (insight) graph — React Flow --- */
+
+.relation-flow-container {
+  height: 420px;
   margin-block: 20px 24px;
-  padding: 20px;
   border-radius: var(--radius-lg);
-  background:
-    radial-gradient(circle at top, rgba(13, 148, 136, 0.18), transparent 44%),
-    linear-gradient(180deg, rgba(17, 24, 39, 0.98), rgba(31, 41, 55, 0.96));
   border: 1px solid rgba(156, 163, 175, 0.16);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  overflow: hidden;
+  background: linear-gradient(180deg, rgba(17, 24, 39, 0.98), rgba(31, 41, 55, 0.96));
 }
 
-.account-insight-graph-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 16px;
+.relation-flow-container .react-flow__background {
+  opacity: 0.4;
 }
 
-.account-insight-graph-toggle-row {
-  margin-top: 16px;
+.relation-flow-container .react-flow__controls {
+  box-shadow: none;
+  border: 1px solid rgba(156, 163, 175, 0.2);
+  border-radius: var(--radius);
+  overflow: hidden;
 }
 
-.account-insight-graph-controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+.relation-flow-container .react-flow__controls button {
+  background: rgba(17, 24, 39, 0.9);
+  border: none;
+  border-bottom: 1px solid rgba(156, 163, 175, 0.15);
+  color: rgba(249, 250, 251, 0.9);
+  width: 28px;
+  height: 28px;
 }
 
-.account-insight-graph-controls button {
-  padding: 8px 12px;
-  border-color: rgba(156, 163, 175, 0.2);
-  background: rgba(17, 24, 39, 0.42);
-  color: rgba(249, 250, 251, 0.94);
+.relation-flow-container .react-flow__controls button:hover {
+  background: rgba(55, 65, 81, 0.9);
 }
 
-.account-insight-graph-stage {
-  overflow: auto;
-  cursor: grab;
-  touch-action: none;
-  user-select: none;
+.relation-flow-container .react-flow__controls button svg {
+  fill: currentColor;
 }
 
-.account-insight-graph-stage-panning {
-  cursor: grabbing;
+.relation-flow-container .react-flow__edge-text {
+  font-size: 10px;
 }
 
-.account-insight-graph {
-  display: block;
-  width: 100%;
-  min-width: 360px;
-  max-width: 720px;
-  margin-inline: auto;
-}
-
-.account-insight-edge {
-  stroke-linecap: round;
-  opacity: 0.88;
-  transition: stroke-width 120ms ease, opacity 120ms ease;
-}
-
-.account-insight-edge-creation {
-  stroke: var(--warning);
-  stroke-dasharray: 10 7;
-}
-
-.account-insight-edge-value-flow {
-  stroke: var(--success);
-}
-
-.account-insight-edge-invocation {
-  stroke: var(--info);
-  stroke-dasharray: 3 7;
-}
-
-.account-insight-edge-strong {
-  stroke-width: 4;
-}
-
-.account-insight-edge-moderate {
-  stroke-width: 2.75;
-}
-
-.account-insight-edge-loose {
-  stroke-width: 1.75;
-  stroke-dasharray: 6 5;
-}
-
-.account-insight-node {
-  stroke-width: 2;
-  transition: transform 120ms ease, stroke-width 120ms ease;
-}
-
-.account-insight-node-center {
-  fill: rgba(17, 24, 39, 0.96);
-  stroke: rgba(156, 163, 175, 0.3);
-}
-
-:root[data-theme='dark'] .account-insight-node-center {
-  fill: rgba(229, 231, 235, 0.92);
-  stroke: rgba(156, 163, 175, 0.3);
-}
-
-.account-insight-node-creation {
-  fill: var(--surface-warning);
-  stroke: var(--warning);
-}
-
-.account-insight-node-value-flow {
-  fill: var(--surface-success);
-  stroke: var(--success);
-}
-
-.account-insight-node-invocation {
-  fill: rgba(13, 148, 136, 0.14);
-  stroke: var(--info);
-}
-
-.account-insight-node-strong {
-  filter: drop-shadow(0 0 10px rgba(17, 24, 39, 0.12));
-}
-
-.account-insight-node-group {
+.relation-flow-node {
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1.5px solid;
+  text-align: center;
   cursor: pointer;
+  min-width: 100px;
+  transition: box-shadow 150ms ease;
 }
 
-.account-insight-node-group:hover .account-insight-edge,
-.account-insight-node-group:hover .account-insight-node,
-.account-insight-node-group:hover .account-insight-node-label,
-.account-insight-node-group:hover .account-insight-node-address {
-  opacity: 1;
+.relation-flow-node:hover {
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.1);
 }
 
-.account-insight-node-title,
-.account-insight-node-subtitle,
-.account-insight-node-index,
-.account-insight-node-label,
-.account-insight-node-address {
-  fill: rgba(249, 250, 251, 0.98);
-  font-weight: 600;
-  paint-order: stroke fill;
-  stroke: rgba(10, 15, 26, 0.85);
-  stroke-width: 3px;
-  stroke-linejoin: round;
+.relation-flow-node-center {
+  background: rgba(17, 24, 39, 0.96);
+  border-width: 2px;
+  min-width: 120px;
 }
 
-.account-insight-node-title {
+.relation-flow-node-selected {
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.6);
+}
+
+.relation-flow-node-role {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: rgba(196, 181, 253, 0.96);
+  margin-bottom: 2px;
+}
+
+.relation-flow-node-label {
   font-size: 12px;
+  font-weight: 600;
+  color: rgba(249, 250, 251, 0.98);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.account-insight-node-subtitle {
-  font-size: 11px;
-  opacity: 0.9;
-}
-
-.account-insight-node-index {
-  font-size: 11px;
-  fill: rgba(249, 250, 251, 0.98);
-  stroke: none;
-}
-
-.account-insight-node-label {
-  font-size: 11px;
-}
-
-.account-insight-node-address {
-  font-size: 11px;
-  fill: rgba(191, 219, 254, 0.96);
-}
-
-.account-insight-node-selected {
-  stroke: var(--danger);
-  fill: rgba(220, 38, 38, 0.12);
-  stroke-width: 3;
-  transform-box: fill-box;
-  transform-origin: center;
-  transform: scale(1.08);
-}
-
-.account-insight-edge-selected {
-  opacity: 1;
-  stroke: var(--danger);
-  stroke-width: 5;
-}
-
-.account-insight-node-label-selected {
-  fill: var(--danger);
-  font-weight: 700;
-}
-
-.account-insight-node-address-selected {
-  fill: rgba(254, 202, 202, 0.96);
-  font-weight: 700;
-}
-
-.account-insight-node-center-copy {
-  fill: rgba(249, 250, 251, 0.96);
-  stroke: none;
-}
-
-:root[data-theme='dark'] .account-insight-node-center-copy {
-  fill: rgba(17, 24, 39, 0.94);
-}
-
-@media (max-width: 720px) {
-  .account-insight-graph-toolbar {
-    align-items: flex-start;
-    flex-direction: column;
-  }
+.relation-flow-node-address {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: rgba(191, 219, 254, 0.86);
+  margin-top: 1px;
 }
 
 .account-insight-pill,
@@ -1917,6 +1799,43 @@ button.link-button:hover {
 .account-insight-pill-invocation {
   background: var(--surface-info);
   color: var(--info);
+}
+
+.account-insight-pill-architecture {
+  background: rgba(139, 92, 246, 0.10);
+  color: #8b5cf6;
+}
+
+.account-insight-role-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(139, 92, 246, 0.10);
+  color: #8b5cf6;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.account-insight-arch-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  font-weight: 600;
+  background: rgba(139, 92, 246, 0.10);
+  color: #8b5cf6;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+:root[data-theme='dark'] .account-insight-arch-badge {
+  background: rgba(139, 92, 246, 0.14);
+  color: #a78bfa;
 }
 
 .account-insight-strength {
@@ -1959,6 +1878,16 @@ button.link-button:hover {
 :root[data-theme='dark'] .account-insight-pill-invocation {
   background: var(--surface-info);
   color: var(--info);
+}
+
+:root[data-theme='dark'] .account-insight-pill-architecture {
+  background: rgba(139, 92, 246, 0.14);
+  color: #a78bfa;
+}
+
+:root[data-theme='dark'] .account-insight-role-badge {
+  background: rgba(139, 92, 246, 0.14);
+  color: #a78bfa;
 }
 
 .summary-table-account-insight th:nth-child(1),
@@ -2021,6 +1950,133 @@ button.link-button:hover {
 .summary-table-account-insight th:nth-child(6),
 .summary-table-account-insight td:nth-child(6) {
   width: 9rem;
+}
+
+/* --- TX Interaction Section --- */
+
+.tx-interaction-wrap {
+  margin-top: 16px;
+}
+
+.tx-interaction-section {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.tx-flow-container {
+  width: 100%;
+  height: 420px;
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(156, 163, 175, 0.16);
+  background: rgba(17, 24, 39, 0.96);
+  overflow: hidden;
+}
+
+.tx-flow-container .react-flow__background {
+  background: rgba(17, 24, 39, 0.96);
+}
+
+.tx-flow-container .react-flow__controls {
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.tx-flow-container .react-flow__controls button {
+  background: rgba(31, 41, 55, 0.96);
+  border-color: rgba(156, 163, 175, 0.2);
+  color: rgba(249, 250, 251, 0.9);
+  width: 28px;
+  height: 28px;
+}
+
+.tx-flow-container .react-flow__controls button:hover {
+  background: rgba(55, 65, 81, 0.96);
+}
+
+.tx-flow-container .react-flow__controls button svg {
+  fill: rgba(249, 250, 251, 0.9);
+}
+
+.tx-flow-container .react-flow__edge-text {
+  font-size: 10px;
+}
+
+.tx-flow-node {
+  padding: 8px 14px;
+  border-radius: var(--radius-md);
+  border-style: solid;
+  color: rgba(249, 250, 251, 0.96);
+  font-size: 12px;
+  min-width: 120px;
+  text-align: center;
+  cursor: pointer;
+  transition: box-shadow 120ms ease;
+}
+
+.tx-flow-node:hover {
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.1);
+}
+
+.tx-flow-node-role {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  opacity: 0.7;
+  margin-bottom: 2px;
+}
+
+.tx-flow-node-label {
+  font-weight: 600;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tx-flow-handle {
+  width: 6px !important;
+  height: 6px !important;
+  background: rgba(156, 163, 175, 0.5) !important;
+  border: none !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+}
+
+.summary-table-tx-interactions table {
+  min-width: 64rem;
+}
+
+.summary-table-tx-interactions th:nth-child(1),
+.summary-table-tx-interactions td:nth-child(1) {
+  width: 14rem;
+}
+
+.summary-table-tx-interactions th:nth-child(2),
+.summary-table-tx-interactions td:nth-child(2) {
+  width: 14rem;
+}
+
+.summary-table-tx-interactions th:nth-child(3),
+.summary-table-tx-interactions td:nth-child(3) {
+  width: 10rem;
+}
+
+.summary-table-tx-interactions th:nth-child(4),
+.summary-table-tx-interactions td:nth-child(4) {
+  width: 14rem;
+}
+
+.summary-table-tx-interactions th:nth-child(5),
+.summary-table-tx-interactions td:nth-child(5) {
+  width: 8rem;
+}
+
+.summary-table-tx-interactions th:nth-child(6),
+.summary-table-tx-interactions td:nth-child(6) {
+  width: 10rem;
 }
 
 .summary-table-blocks th:nth-child(1),

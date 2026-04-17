@@ -252,7 +252,7 @@ export type DiscoveredAccount = {
   transactionCount: number
 }
 
-export type AccountInsightRelationKind = 'creation' | 'value-flow' | 'invocation'
+export type AccountInsightRelationKind = 'architecture' | 'creation' | 'value-flow' | 'invocation'
 
 export type AccountInsightRelationStrength = 'strong' | 'moderate' | 'loose'
 
@@ -277,6 +277,7 @@ export type AccountInsightRelation = {
   supportingEvidence: string[]
   tokenAddresses: Hex[]
   sampleTxHash: Hex | null
+  architectureRole?: string | null
 }
 
 export type SearchTarget =

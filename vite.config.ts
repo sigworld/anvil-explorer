@@ -140,6 +140,9 @@ function abiApiPlugin(): Plugin {
 export default defineConfig({
   base: process.env.VITE_BASE_PATH || '/',
   plugins: [preact(), abiApiPlugin()],
+  build: {
+    chunkSizeWarningLimit: 600,
+  },
   server: {
     port: 7777,
     strictPort: true,

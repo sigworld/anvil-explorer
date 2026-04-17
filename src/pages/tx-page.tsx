@@ -1,5 +1,6 @@
 import { DebugTraceView } from '../components/debug-trace-view.tsx'
 import { StackTraceView } from '../components/stack-trace-view.tsx'
+import { TxInteractionSection } from '../components/tx-interaction-section.tsx'
 import type { ComponentChildren } from 'preact'
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { decodeLog, decodeTransaction, mergeAbis, toAbiRecord } from '../lib/decode.ts'
@@ -66,7 +67,7 @@ type RouteProps = {
   path?: string
 }
 
-type TxDetailTab = 'overview' | 'stack' | 'debug'
+type TxDetailTab = 'overview' | 'stack' | 'debug' | 'interactions'
 
 function formatTokenEffectDelta(
   delta: string,
@@ -324,7 +325,7 @@ export function TxPage(props: RouteProps) {
   }
 
   useEffect(() => {
-    if ((activeTab !== 'overview' && activeTab !== 'stack' && activeTab !== 'debug') || traceLoading || rawTrace) return
+    if ((activeTab !== 'overview' && activeTab !== 'stack' && activeTab !== 'debug' && activeTab !== 'interactions') || traceLoading || rawTrace) return
     void loadTraceData()
   }, [activeTab, props.hash, rpcUrl])
 
@@ -397,6 +398,20 @@ export function TxPage(props: RouteProps) {
 
       const merged = mergeAbis([toAbi?.abi, createdAbi?.abi, implAbi?.abi])
       const contractAbi = merged.length > 0 ? merged : null
+
+      // Build per-address ABI map for log decoding (logs may come from different contracts)
+      const logAddresses = [...new Set(logs.map((l) => l.address))]
+      const [logAbiEntries, logImplAbiEntries] = await Promise.all([
+        Promise.all(logAddresses.map(async (address) => [address, (await getAbi(address))?.abi ?? null] as const)),
+        Promise.all(logAddresses.map(async (address) => {
+          const impl = await getProxyImplementation(client, address as `0x${string}`)
+          return [address, impl ? ((await getAbi(impl))?.abi ?? null) : null] as const
+        })),
+      ])
+      const logAbiMap = new Map(logAddresses.map((address, i) => {
+        const abi = mergeAbis([logAbiEntries[i][1], logImplAbiEntries[i][1], contractAbi])
+        return [address, abi.length > 0 ? abi : null] as const
+      }))
       const failure =
         receipt?.status === '0' ? await inspectTransactionFailure(client, transaction, contractAbi) : null
       const tokenEffects = await buildTokenBalanceEffects(client, logs, transaction.blockNumber)
@@ -407,6 +422,7 @@ export function TxPage(props: RouteProps) {
         logs,
         summary,
         contractAbi,
+        logAbiMap,
         fromKind,
         toKind,
         failure,
@@ -783,6 +799,15 @@ export function TxPage(props: RouteProps) {
             <button
               type="button"
               role="tab"
+              aria-selected={activeTab === 'interactions'}
+              class={`tx-detail-tab ${activeTab === 'interactions' ? 'tx-detail-tab-active' : ''}`}
+              onClick={() => setActiveTab('interactions')}
+            >
+              Interactions
+            </button>
+            <button
+              type="button"
+              role="tab"
               aria-selected={activeTab === 'stack'}
               class={`tx-detail-tab ${activeTab === 'stack' ? 'tx-detail-tab-active' : ''}`}
               onClick={() => setActiveTab('stack')}
@@ -876,8 +901,9 @@ export function TxPage(props: RouteProps) {
                         ]}
                       >
                         {resource.data.logs.map((log) => {
-                          const decoded = resource.data?.contractAbi
-                            ? decodeLog(log, resource.data.contractAbi)
+                          const logAbi = resource.data?.logAbiMap?.get(log.address) ?? resource.data?.contractAbi
+                          const decoded = logAbi
+                            ? decodeLog(log, logAbi)
                             : null
                           const topicsText = log.topics.length > 0 ? log.topics.join('\n') : 'n/a'
 
@@ -938,6 +964,20 @@ export function TxPage(props: RouteProps) {
                 </TxDetailPanel>
               </div>
             </div>
+          )}
+
+          {activeTab === 'interactions' && (
+            <section class="tx-interaction-wrap">
+              {traceError && <ErrorState message={traceError} />}
+              {traceLoading && !trace && <p class="muted">Loading trace data…</p>}
+              {trace && resource.data && (
+                <TxInteractionSection
+                  trace={trace}
+                  txFrom={resource.data.transaction.from as `0x${string}`}
+                  txTo={(resource.data.transaction.to ?? null) as `0x${string}` | null}
+                />
+              )}
+            </section>
           )}
 
           {activeTab === 'stack' && (

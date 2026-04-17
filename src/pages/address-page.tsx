@@ -13,11 +13,13 @@ import {
   getDiscoveredHoldersForErc20Contract,
   getLogsForAddress,
   getTransactionsForAddress,
+  mergeArchitectureRelations,
   upsertAbi,
   upsertAddressLabel,
   upsertCodeImage,
   upsertSourceFile,
 } from '../lib/db.ts'
+import { detectContractArchitecture } from '../lib/contract-architecture.ts'
 import { getDefaultAddressLabel } from '../lib/address-labels.ts'
 import { decodeLog, mergeAbis, toAbiRecord } from '../lib/decode.ts'
 import {
@@ -245,6 +247,9 @@ export function AddressPage(props: RouteProps) {
         proxyResolution,
       ])
 
+      // Architecture detection uses logs for ERC-4337, so run after logs are available
+      const architecture = await detectContractArchitecture(client, normalizedAddress as `0x${string}`, logs)
+
       const proxyImpl = proxyResult?.impl ?? null
       const implAbi = proxyResult?.abi ?? null
 
@@ -277,11 +282,13 @@ export function AddressPage(props: RouteProps) {
             })
         : []
 
+      const mergedInsight = await mergeArchitectureRelations(architecture, accountInsight, normalizedAddress)
       const defaultLabel = getDefaultAddressLabel(normalizedAddress)
 
       return {
         abi,
-        accountInsight,
+        accountInsight: mergedInsight,
+        architecture,
         contractDiscovery: discoveredContracts.find((item) => item.address === normalizedAddress) ?? null,
         implAbi,
         proxyImpl,
@@ -901,7 +908,7 @@ export function AddressPage(props: RouteProps) {
                 {labelError && <ErrorState message={labelError} />}
               </PageSection>
               {renderTokenSection()}
-              <AccountInsightSection address={normalizedAddress!} relations={resource.data.accountInsight} />
+              <AccountInsightSection address={normalizedAddress!} relations={resource.data.accountInsight} architecture={resource.data.architecture} />
               {renderTransactions()}
               {renderLogs()}
             </div>
@@ -1163,7 +1170,7 @@ export function AddressPage(props: RouteProps) {
               </div>
               <aside class="detail-sidebar">{renderTokenSection()}</aside>
             </div>
-            <AccountInsightSection address={normalizedAddress!} relations={resource.data.accountInsight} />
+            <AccountInsightSection address={normalizedAddress!} relations={resource.data.accountInsight} architecture={resource.data.architecture} />
             {renderTransactions()}
           </>
         ))}

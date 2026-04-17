@@ -25,6 +25,8 @@ const DB_VERSION = 4
 const KNOWN_SCOPES_STORAGE_KEY = 'anvil-explorer.known-db-scopes'
 const ERC20_TRANSFER_TOPIC =
   '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
+export const UPGRADED_EVENT_TOPIC =
+  '0xbc7cd75a20ee27fd9adebab32041f755214dbc6bffa90cc0225b39da2e5c2d3b'
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 
 interface ExplorerDbSchema extends DBSchema {
@@ -776,6 +778,8 @@ function getInsightStrength(score: number, evidenceCount: number): AccountInsigh
 
 function getInsightPriority(kind: AccountInsightRelation['kind']) {
   switch (kind) {
+    case 'architecture':
+      return -1
     case 'creation':
       return 0
     case 'value-flow':
@@ -1110,8 +1114,9 @@ export async function getResolvedAddressLabel(address: string | null | undefined
     return null
   }
 
-  const manual = await getAddressLabel(address)
-  return manual?.label ?? getDefaultAddressLabel(address)
+  const checksummed = getAddress(address)
+  const manual = await getAddressLabel(checksummed)
+  return manual?.label ?? getDefaultAddressLabel(checksummed)
 }
 
 export async function getExplorerStats(): Promise<ExplorerStats> {
@@ -1161,4 +1166,89 @@ export async function resetAllExplorerData() {
   window.localStorage.removeItem(KNOWN_SCOPES_STORAGE_KEY)
 
   await Promise.all(knownDbNames.map(deleteDatabaseByName))
+}
+
+// --- Architecture relation merging ---
+
+import type { ContractArchitecture } from './contract-architecture.ts'
+
+export async function mergeArchitectureRelations(
+  architecture: ContractArchitecture,
+  activityRelations: AccountInsightRelation[],
+  address: string,
+): Promise<AccountInsightRelation[]> {
+  if (architecture.kind === 'plain' || architecture.relations.length === 0) {
+    return activityRelations
+  }
+
+  // Scan for Upgraded events on this address to add supporting evidence
+  const db = await getDb()
+  const allLogs = await db.getAllFromIndex('logs', 'address', address as Hex)
+  const upgradedLogs = allLogs.filter((log) => log.topic0 === UPGRADED_EVENT_TOPIC)
+
+  const architectureRelations: AccountInsightRelation[] = architecture.relations.map((rel) => {
+    const existingActivity = activityRelations.find(
+      (activity) => activity.address.toLowerCase() === rel.address.toLowerCase(),
+    )
+
+    const supportingEvidence: string[] = [rel.role]
+
+    if (upgradedLogs.length > 0 && rel.role === 'implementation') {
+      supportingEvidence.push(
+        upgradedLogs.length === 1
+          ? 'proxy upgraded'
+          : `${upgradedLogs.length} proxy upgrades`,
+      )
+    }
+
+    return {
+      address: rel.address as Hex,
+      kind: 'architecture' as const,
+      label: rel.label,
+      strength: 'strong' as const,
+      score: 100,
+      lastSeenBlock: existingActivity?.lastSeenBlock ?? null,
+      transactionCount: existingActivity?.transactionCount ?? 0,
+      invocationInCount: existingActivity?.invocationInCount ?? 0,
+      invocationOutCount: existingActivity?.invocationOutCount ?? 0,
+      nativeInCount: existingActivity?.nativeInCount ?? 0,
+      nativeOutCount: existingActivity?.nativeOutCount ?? 0,
+      nativeInValue: existingActivity?.nativeInValue ?? '0',
+      nativeOutValue: existingActivity?.nativeOutValue ?? '0',
+      tokenInCount: existingActivity?.tokenInCount ?? 0,
+      tokenOutCount: existingActivity?.tokenOutCount ?? 0,
+      creationInCount: existingActivity?.creationInCount ?? 0,
+      creationOutCount: existingActivity?.creationOutCount ?? 0,
+      supportingEvidence: existingActivity
+        ? [...supportingEvidence, ...existingActivity.supportingEvidence]
+        : supportingEvidence,
+      tokenAddresses: existingActivity?.tokenAddresses ?? [],
+      sampleTxHash: existingActivity?.sampleTxHash ?? null,
+      architectureRole: rel.role,
+    }
+  })
+
+  // Filter out activity relations that were merged into architecture relations
+  const architectureAddresses = new Set(
+    architectureRelations.map((r) => r.address.toLowerCase()),
+  )
+  const remainingActivity = activityRelations.filter(
+    (r) => !architectureAddresses.has(r.address.toLowerCase()),
+  )
+
+  return [...architectureRelations, ...remainingActivity].sort((left, right) => {
+    const priorityDelta = getInsightPriority(left.kind) - getInsightPriority(right.kind)
+
+    if (priorityDelta !== 0) {
+      return priorityDelta
+    }
+
+    const scoreDelta = right.score - left.score
+
+    if (scoreDelta !== 0) {
+      return scoreDelta
+    }
+
+    return (right.lastSeenBlock ?? -1) - (left.lastSeenBlock ?? -1)
+  })
 }

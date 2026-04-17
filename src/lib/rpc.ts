@@ -470,11 +470,12 @@ export async function getFullContractStorage(
   return {}
 }
 
-const ERC1967_IMPLEMENTATION_SLOT = '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc' as Hex
-const ERC1967_BEACON_SLOT = '0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50' as Hex
+export const ERC1967_IMPLEMENTATION_SLOT = '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc' as Hex
+export const ERC1967_BEACON_SLOT = '0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50' as Hex
+export const ERC1967_ADMIN_SLOT = '0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103' as Hex
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 
-function addressFromSlot(slot: Hex): Hex {
+export function addressFromSlot(slot: Hex): Hex {
   return ('0x' + slot.slice(26)) as Hex
 }
 
