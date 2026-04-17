@@ -14,6 +14,10 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { getResolvedAddressLabel } from '../lib/db.ts'
+import { useFlowFullscreen } from '../hooks/use-fullscreen.ts'
+import { computeEdgeCrossings } from '../lib/tx-interactions.ts'
+import { CrossingEdge } from './crossing-edge.tsx'
+import { FullscreenButton } from './fullscreen-button.tsx'
 import { shortenHex } from '../lib/format.ts'
 import { useAsyncResource } from '../hooks/use-async-resource.ts'
 import { useExplorer } from '../hooks/use-explorer.tsx'
@@ -118,6 +122,7 @@ function InsightNode({ data }: NodeProps<FlowNode<InsightNodeData>>) {
 }
 
 const nodeTypes = { insightNode: InsightNode }
+const edgeTypes = { crossingEdge: CrossingEdge }
 
 // --- Dagre layout ---
 
@@ -243,6 +248,17 @@ function buildInsightFlowGraph(
     })
   })
 
+  // Detect edge crossings and upgrade affected edges to crossingEdge type
+  const edgeDescriptors = flowEdges.map((fe) => {
+    const sn = g.node(fe.source)
+    const tn = g.node(fe.target)
+    return { sourceX: sn?.x ?? 0, sourceY: sn?.y ?? 0, targetX: tn?.x ?? 0, targetY: tn?.y ?? 0 }
+  })
+  const crossingsResult = computeEdgeCrossings(edgeDescriptors, NODE_HEIGHT)
+  for (const [i, crossings] of crossingsResult) {
+    flowEdges[i] = { ...flowEdges[i], type: 'crossingEdge', data: { crossings } }
+  }
+
   return { nodes: flowNodes, edges: flowEdges }
 }
 
@@ -302,15 +318,20 @@ export function RelationGraph(props: RelationGraphProps) {
     }
   }, [props.onSelect])
 
+  const { fullscreen, toggle: toggleFullscreen, onInit: onFlowInit } = useFlowFullscreen()
+
   return (
-    <div class="relation-flow-container">
+    <div class={`relation-flow-container${fullscreen ? ' flow-fullscreen' : ''}`}>
+      <FullscreenButton fullscreen={fullscreen} onClick={toggleFullscreen} />
       <ReactFlow
         nodes={flowNodes}
         edges={flowEdges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodeClick={onNodeClick}
+        onInit={onFlowInit}
         fitView
         minZoom={0.3}
         maxZoom={2}

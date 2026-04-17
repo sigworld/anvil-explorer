@@ -1,4 +1,5 @@
 import { decodeFunctionData, getAbiItem, getAddress, isAddress, type Abi, type Hex } from 'viem'
+import { isPrecompileAddress } from './address-labels.ts'
 import { getAbi } from './db.ts'
 import { mergeAbis } from './decode.ts'
 import { getProxyImplementation, type AnvilClient } from './rpc.ts'
@@ -132,8 +133,9 @@ function normalizeNode(
 ): TraceNode {
   const to = normalizeTraceAddress(node.to)
   const input = node.input ?? '0x'
-  const selector = getSelector(input)
-  const decoded = to ? decodeTraceFunction(input, abiMap.get(to)) : null
+  const precompile = isPrecompileAddress(to)
+  const selector = precompile ? null : getSelector(input)
+  const decoded = to && !precompile ? decodeTraceFunction(input, abiMap.get(to)) : null
   const status = node.revertReason
     ? 'reverted'
     : node.error

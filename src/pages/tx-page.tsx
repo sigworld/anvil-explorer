@@ -450,6 +450,14 @@ export function TxPage(props: RouteProps) {
     setForgeScanResult(null)
   }
 
+  async function rebuildTraceTree() {
+    if (rawTrace) {
+      const client = createAnvilClient(rpcUrl)
+      const tree = await buildTraceTree(rawTrace, client)
+      setTrace(tree)
+    }
+  }
+
   async function handleAbiSubmit(event: Event) {
     event.preventDefault()
     setAbiError(null)
@@ -477,6 +485,8 @@ export function TxPage(props: RouteProps) {
           ? `Saved ABI and label for ${shortenHex(contractAddress)}`
           : `Saved ABI for ${shortenHex(contractAddress)}`,
       )
+      await rebuildTraceTree()
+
       setLocalVersion((current) => current + 1)
       actions.refresh()
     } catch (caughtError: unknown) {
@@ -554,6 +564,9 @@ export function TxPage(props: RouteProps) {
       setForgeScanResult(null)
       setAbiModalAddress(null)
       setAbiResult(`Saved ABI: ${candidate.name} (${parts.join(', ')})`)
+
+      await rebuildTraceTree()
+
       setLocalVersion((current) => current + 1)
       actions.refresh()
     } catch (caughtError: unknown) {

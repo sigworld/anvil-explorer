@@ -122,6 +122,93 @@ export function buildTxInteractionGraph(
   return { nodes, edges, primaryAddress: txFrom }
 }
 
+// --- Edge crossing detection ---
+
+type Point = { x: number; y: number }
+type Segment = { x1: number; y1: number; x2: number; y2: number }
+
+/** Compute the 3-segment smoothstep path for a TB dagre edge. */
+function edgeSegments(
+  sourceX: number, sourceBottom: number,
+  targetX: number, targetTop: number,
+): Segment[] {
+  const midY = (sourceBottom + targetTop) / 2
+  return [
+    { x1: sourceX, y1: sourceBottom, x2: sourceX, y2: midY },
+    { x1: sourceX, y1: midY, x2: targetX, y2: midY },
+    { x1: targetX, y1: midY, x2: targetX, y2: targetTop },
+  ]
+}
+
+/** Find intersection of a horizontal segment with a vertical segment. */
+function hvIntersect(h: Segment, v: Segment): Point | null {
+  const hY = h.y1
+  const vX = v.x1
+  const hMin = Math.min(h.x1, h.x2)
+  const hMax = Math.max(h.x1, h.x2)
+  const vMin = Math.min(v.y1, v.y2)
+  const vMax = Math.max(v.y1, v.y2)
+  // Strict interior — touching at endpoints doesn't count
+  if (vX > hMin + 1 && vX < hMax - 1 && hY > vMin + 1 && hY < vMax - 1) {
+    return { x: vX, y: hY }
+  }
+  return null
+}
+
+function isHorizontal(s: Segment) { return Math.abs(s.y1 - s.y2) < 0.5 }
+function isVertical(s: Segment) { return Math.abs(s.x1 - s.x2) < 0.5 }
+
+/**
+ * Find all crossing points between two edge paths.
+ * Each path is an array of axis-aligned segments.
+ */
+function findCrossings(segsA: Segment[], segsB: Segment[]): Point[] {
+  const pts: Point[] = []
+  for (const a of segsA) {
+    for (const b of segsB) {
+      if (isHorizontal(a) && isVertical(b)) {
+        const p = hvIntersect(a, b)
+        if (p) pts.push(p)
+      } else if (isVertical(a) && isHorizontal(b)) {
+        const p = hvIntersect(b, a)
+        if (p) pts.push(p)
+      }
+    }
+  }
+  return pts
+}
+
+export type EdgeCrossing = Point
+
+/**
+ * Given an array of edges described by source/target node centers and node height,
+ * compute which edges cross and return a Map from edge index to crossing points.
+ */
+export function computeEdgeCrossings(
+  edges: { sourceX: number; sourceY: number; targetX: number; targetY: number }[],
+  nodeHeight: number,
+): Map<number, EdgeCrossing[]> {
+  const allSegments = edges.map((e) =>
+    edgeSegments(e.sourceX, e.sourceY + nodeHeight / 2, e.targetX, e.targetY - nodeHeight / 2),
+  )
+
+  const result = new Map<number, EdgeCrossing[]>()
+  for (let i = 0; i < allSegments.length; i++) {
+    for (let j = i + 1; j < allSegments.length; j++) {
+      const pts = findCrossings(allSegments[i], allSegments[j])
+      for (const p of pts) {
+        let list = result.get(i)
+        if (!list) { list = []; result.set(i, list) }
+        list.push(p)
+        let list2 = result.get(j)
+        if (!list2) { list2 = []; result.set(j, list2) }
+        list2.push(p)
+      }
+    }
+  }
+  return result
+}
+
 // --- React Flow conversion with dagre layout ---
 
 type DeduplicatedEdge = {
@@ -297,8 +384,7 @@ export function buildFlowGraph(
   const nodeWidth = 170
   const nodeHeight = 50
 
-  for (const [key, node] of graph.nodes) {
-    void node
+  for (const key of graph.nodes.keys()) {
     g.setNode(key, { width: nodeWidth, height: nodeHeight })
   }
 
@@ -347,6 +433,17 @@ export function buildFlowGraph(
     })
   }
 
+  // Detect edge crossings
+  const edgeDescriptors = deduped.map((edge) => {
+    const sourceNode = g.node(edge.from.toLowerCase())
+    const targetNode = g.node(edge.to.toLowerCase())
+    return {
+      sourceX: sourceNode?.x ?? 0, sourceY: sourceNode?.y ?? 0,
+      targetX: targetNode?.x ?? 0, targetY: targetNode?.y ?? 0,
+    }
+  })
+  const crossingsMap = computeEdgeCrossings(edgeDescriptors, nodeHeight)
+
   // Convert to React Flow edges
   const flowEdges: FlowEdge[] = deduped.map((edge, index) => {
     const edgeLabel = edge.functions.length > 0
@@ -354,12 +451,17 @@ export function buildFlowGraph(
         + (edge.functions.length > 2 ? ' +' + (edge.functions.length - 2) : '')
       : edge.dominantCallType
 
+    const edgeId = `e-${index}`
+    const crossings = crossingsMap.get(index)
+
     return {
-      id: `e-${index}`,
+      id: edgeId,
       source: edge.from.toLowerCase(),
       target: edge.to.toLowerCase(),
+      type: crossings ? 'crossingEdge' : 'smoothstep',
       label: edgeLabel,
       animated: edge.dominantCallType === 'DELEGATECALL',
+      data: crossings ? { crossings } : undefined,
       style: {
         stroke: getEdgeColor(edge.dominantCallType),
         strokeWidth: Math.min(edge.count + 1, 4),

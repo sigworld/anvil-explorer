@@ -22,13 +22,36 @@ The app connects to `http://127.0.0.1:8545` by default. Configure RPC endpoints 
 - Browse blocks, transactions, accounts, contracts, and event logs
 - Search by block number, block hash, transaction hash, or address
 - Decode calldata, receipt logs, and custom errors with attached ABIs (raw JSON or Forge artifacts)
-- ERC-1967 proxy detection — automatically resolves implementation addresses and merges proxy + implementation ABIs for decoding
+- Contract architecture detection — identifies ERC-1967 proxies, EIP-1167 clones, EIP-2535 diamonds, and ERC-4337 abstract accounts, with automatic ABI merging for proxied calls
 - Inspect ERC-20 balances, token holders, and per-transaction balance changes
+- Interactive relationship and interaction graphs with dagre-based hierarchical layout, fullscreen mode, and edge crossing visualization
 - On-demand `debug_traceTransaction` call trees with opcode-level execution trace and gas cost breakdown
 - Source-mapped stack traces and stepping debugger when Forge build artifacts are imported
+- EVM precompile labeling — `ecrecover`, `SHA-256`, `modexp`, etc. display by name instead of raw hex
 - Anvil controls: mine blocks, mint native ETH, mint ERC-20 tokens, snapshot / revert, impersonate accounts
 - Multi-endpoint support — save and switch between multiple Anvil instances with color-coded indicators
 - **Forked chain support** — auto-detects `anvil --fork-url` via `anvil_nodeInfo`, indexes only post-fork blocks, and fetches pre-fork blocks on demand from the origin chain
+
+## Contract Architecture Detection
+
+The explorer identifies common contract patterns on address pages:
+
+- **ERC-1967 Proxy** — resolves implementation addresses and merges proxy + implementation ABIs for decoding
+- **EIP-1167 Minimal Clone** — detects clone factories and links to the master copy
+- **EIP-2535 Diamond** — recognizes diamond proxy patterns with facet routing
+- **ERC-4337 Abstract Account** — identifies account abstraction contracts
+
+Detected architecture is shown as a badge in the address page's **Insight** section and integrated into the relationship graph.
+
+## Interaction Graphs
+
+### Transaction Interactions
+
+On any transaction's detail page, the **Interactions** tab shows a directed graph of how contracts communicated during execution, derived from the call trace. Nodes represent addresses, edges represent calls with decoded function names and value transfers. Attaching an ABI live-refreshes labels and decoded names in the graph.
+
+### Address Relationships
+
+The **Insight** section on address pages visualizes observed relationships — value flows, invocations, contract creation, and architecture links — as an interactive graph. Both graph types support zoom, pan, draggable nodes, fullscreen toggle, and arc-based edge crossing indicators for readability.
 
 ## Forked Chains
 

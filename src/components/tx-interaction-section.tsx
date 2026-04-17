@@ -16,7 +16,10 @@ import type { TraceNode } from '../lib/types.ts'
 import { getResolvedAddressLabel } from '../lib/db.ts'
 import { shortenHex } from '../lib/format.ts'
 import { buildTxInteractionGraph, buildFlowGraph, type TxInteraction } from '../lib/tx-interactions.ts'
+import { useFlowFullscreen } from '../hooks/use-fullscreen.ts'
 import { AddressLink, SummaryTable } from './common.tsx'
+import { CrossingEdge } from './crossing-edge.tsx'
+import { FullscreenButton } from './fullscreen-button.tsx'
 
 type TxInteractionSectionProps = {
   trace: TraceNode
@@ -54,6 +57,7 @@ function InteractionNode({ data }: NodeProps<FlowNode<InteractionNodeData>>) {
 }
 
 const nodeTypes = { interactionNode: InteractionNode }
+const edgeTypes = { crossingEdge: CrossingEdge }
 
 // --- Edge detail table sub-components ---
 
@@ -134,6 +138,8 @@ export function TxInteractionSection(props: TxInteractionSectionProps) {
     setFlowEdges(initialFlow.edges)
   }, [initialFlow, setFlowNodes, setFlowEdges])
 
+  const { fullscreen, toggle: toggleFullscreen, onInit: onFlowInit } = useFlowFullscreen()
+
   const [selectedAddress, setSelectedAddress] = useState<string | null>(null)
 
   const onNodeClick = useCallback((_event: unknown, node: FlowNode) => {
@@ -167,14 +173,17 @@ export function TxInteractionSection(props: TxInteractionSectionProps) {
 
   return (
     <div class="tx-interaction-section">
-      <div class="tx-flow-container">
+      <div class={`tx-flow-container${fullscreen ? ' flow-fullscreen' : ''}`}>
+        <FullscreenButton fullscreen={fullscreen} onClick={toggleFullscreen} />
         <ReactFlow
           nodes={flowNodes}
           edges={flowEdges}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           onNodeClick={onNodeClick}
+          onInit={onFlowInit}
           fitView
           minZoom={0.3}
           maxZoom={2}

@@ -1,3 +1,24 @@
+const EVM_PRECOMPILE_LABELS: Record<string, string> = {
+  '0x0000000000000000000000000000000000000001': 'ecrecover',
+  '0x0000000000000000000000000000000000000002': 'SHA-256',
+  '0x0000000000000000000000000000000000000003': 'RIPEMD-160',
+  '0x0000000000000000000000000000000000000004': 'identity',
+  '0x0000000000000000000000000000000000000005': 'modexp',
+  '0x0000000000000000000000000000000000000006': 'ecAdd',
+  '0x0000000000000000000000000000000000000007': 'ecMul',
+  '0x0000000000000000000000000000000000000008': 'ecPairing',
+  '0x0000000000000000000000000000000000000009': 'blake2f',
+  '0x000000000000000000000000000000000000000a': 'pointEvaluation',
+}
+
+export function isPrecompileAddress(address: string | null | undefined): boolean {
+  if (!address) {
+    return false
+  }
+
+  return address.toLowerCase() in EVM_PRECOMPILE_LABELS
+}
+
 const ANVIL_ACCOUNT_LABELS: Record<string, string> = {
   '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266': 'Anvil Account 0 (Deployer)',
   '0x70997970c51812dc3a010c7d01b50e0d17dc79c8': 'Anvil Account 1',
@@ -21,5 +42,6 @@ export function getDefaultAddressLabel(address: string | null | undefined) {
     return null
   }
 
-  return ANVIL_ACCOUNT_LABELS[address.toLowerCase()] ?? null
+  const lower = address.toLowerCase()
+  return EVM_PRECOMPILE_LABELS[lower] ?? ANVIL_ACCOUNT_LABELS[lower] ?? null
 }
