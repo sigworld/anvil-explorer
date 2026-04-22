@@ -1,123 +1,64 @@
 # Anvil Explorer
 
-A browser-based block explorer for local Foundry `anvil` chains. Indexes chain data into IndexedDB and provides a full inspection UI — blocks, transactions, contracts, logs, token activity, execution traces, and source-level debugging — entirely in the browser.
+A block explorer for your local `anvil` chain. Runs in the browser, indexes everything into IndexedDB, and gives you the same inspection workflow you'd use on Etherscan — but for your local dev environment.
 
-**Try it now: [anvilscan.sigworld.io](https://anvilscan.sigworld.io)**
+**Live demo: [anvilscan.sigworld.io](https://anvilscan.sigworld.io)** (append `?demo` to explore with sample data, no Anvil needed)
 
 https://github.com/user-attachments/assets/a7470f21-a84d-429c-8d2f-6971a6e887c4
 
-## Quick Start
-
-Requirements: Node.js 20+ and a running local Anvil node.
+## Setup
 
 ```bash
-anvil                              # start anvil (or anvil --fork-url <rpc>)
-npm install && npm run dev -- --host 127.0.0.1  # start explorer at http://127.0.0.1:7777
+anvil                                            # or anvil --fork-url <rpc>
+npm install && npm run dev -- --host 127.0.0.1   # http://127.0.0.1:7777
 ```
 
-The app connects to `http://127.0.0.1:8545` by default. Configure RPC endpoints and start block from the **Config** page, or switch between saved endpoints from the sidebar dropdown.
+Connects to `http://127.0.0.1:8545` by default. Change the RPC endpoint or set a custom start block on the **Config** page.
 
-## Features
+## What You Get
 
-- Browse blocks, transactions, accounts, contracts, and event logs
-- Search by block number, block hash, transaction hash, or address
-- Decode calldata, receipt logs, and custom errors with attached ABIs (raw JSON or Forge artifacts)
-- Contract architecture detection — identifies ERC-1967 proxies, EIP-1167 clones, EIP-2535 diamonds, and ERC-4337 abstract accounts, with automatic ABI merging for proxied calls
-- Inspect ERC-20 balances, token holders, and per-transaction balance changes
-- Interactive relationship and interaction graphs with dagre-based hierarchical layout, fullscreen mode, and edge crossing visualization
-- On-demand `debug_traceTransaction` call trees with opcode-level execution trace and gas cost breakdown
-- Source-mapped stack traces and stepping debugger when Forge build artifacts are imported
-- EVM precompile labeling — `ecrecover`, `SHA-256`, `modexp`, etc. display by name instead of raw hex
-- Anvil controls: mine blocks, mint native ETH, mint ERC-20 tokens, snapshot / revert, impersonate accounts
-- Multi-endpoint support — save and switch between multiple Anvil instances with color-coded indicators
-- **Forked chain support** — auto-detects `anvil --fork-url` via `anvil_nodeInfo`, indexes only post-fork blocks, and fetches pre-fork blocks on demand from the origin chain
+**Browsing & Search** — blocks, transactions, accounts, contracts, event logs. Search by block number, block hash, tx hash, or address.
 
-## Contract Architecture Detection
+**Calldata & Log Decoding** — attach ABIs (raw JSON or Forge artifacts) and the explorer decodes function calls, event logs, and revert errors everywhere they appear. Proxy contracts (ERC-1967) automatically merge implementation ABIs so proxied calls decode correctly.
 
-The explorer identifies common contract patterns on address pages:
+**Contract Architecture** — detects ERC-1967 proxies, EIP-1167 clones, EIP-2535 diamonds, and ERC-4337 abstract accounts. Shows implementation addresses, links to master copies, and badges the pattern on address pages.
 
-- **ERC-1967 Proxy** — resolves implementation addresses and merges proxy + implementation ABIs for decoding
-- **EIP-1167 Minimal Clone** — detects clone factories and links to the master copy
-- **EIP-2535 Diamond** — recognizes diamond proxy patterns with facet routing
-- **ERC-4337 Abstract Account** — identifies account abstraction contracts
+**Token Inspection** — ERC-20 balances, holder lists, and per-transaction balance diffs with before/after reads.
 
-Detected architecture is shown as a badge in the address page's **Insight** section and integrated into the relationship graph.
+**Execution Tracing** — three views on any transaction:
+- **Call Tree** — nested contract calls from `debug_traceTransaction` with gas, decoded names, and args
+- **Stack Trace** — source-mapped Solidity frames with inline code display (requires Forge artifacts with source maps)
+- **Opcode Trace** — step-by-step EVM execution with PC, gas cost, depth, stack, and storage state
 
-## Interaction Graphs
+**Interaction Graphs** — per-transaction call graphs and per-address relationship graphs showing value flows, invocations, and contract creation. Dagre layout, draggable nodes, fullscreen, edge crossing arcs.
 
-### Transaction Interactions
+**Anvil Controls** — mine blocks, mint ETH, mint ERC-20 tokens (brute-forces the `balanceOf` slot), snapshot/revert, impersonate accounts. All from the UI.
 
-On any transaction's detail page, the **Interactions** tab shows a directed graph of how contracts communicated during execution, derived from the call trace. Nodes represent addresses, edges represent calls with decoded function names and value transfers. Attaching an ABI live-refreshes labels and decoded names in the graph.
+**Forked Chain Support** — auto-detects `anvil --fork-url` via `anvil_nodeInfo`, indexes only post-fork blocks, fetches pre-fork blocks on demand from the origin RPC.
 
-### Address Relationships
+**Multi-Endpoint** — save and switch between multiple Anvil instances from the sidebar.
 
-The **Insight** section on address pages visualizes observed relationships — value flows, invocations, contract creation, and architecture links — as an interactive graph. Both graph types support zoom, pan, draggable nodes, fullscreen toggle, and arc-based edge crossing indicators for readability.
+## Loading ABIs
 
-## Forked Chains
+ABIs unlock decoded calldata, logs, and errors across the explorer. Three ways to get them in:
 
-When connected to a forked Anvil instance, the explorer automatically:
+### Import from Forge (recommended)
 
-- Detects the fork origin and block number (shown in the sidebar)
-- Indexes only blocks created after the fork — no attempt to sync millions of historical blocks
-- Fetches pre-fork blocks live from the origin RPC on navigation (marked with a banner)
+Click **Import from Forge** on the ABIs page and select your Forge project root. The explorer scans `out/` for compiled artifacts and cross-references `broadcast/` to match contracts to deployed addresses — imports everything in one step, including source files for the stepping debugger.
 
-A custom **Start Block** can be set on the **Config** page to narrow the indexing window further, even on non-forked chains.
-
-## Token Minting
-
-### Native ETH
-
-From the **Config** page, use **Mint Native Token** to add ETH to any address. This is additive — it reads the current balance and adds the specified amount on top (unlike `anvil_setBalance` which overwrites).
-
-### ERC-20 Tokens
-
-Use **Mint ERC20 Token** on the **Config** page to deal arbitrary ERC-20 tokens to any address. Enter the token contract address, click **Lookup** to auto-detect decimals and symbol, then specify the recipient and amount.
-
-This also works inline from the **Token Metadata** sidebar on any ERC-20 contract's address page — useful when already inspecting a token.
-
-Under the hood, the explorer brute-forces the `balanceOf` storage slot (Solidity and Vyper mapping layouts, slots 0–19) and writes via `anvil_setStorageAt`. Works with standard token implementations; exotic storage layouts may not be supported.
-
-## Execution Tracing
-
-On any transaction's detail page, the **Trace** tab offers three views:
-
-- **Call Tree** — high-level call graph from `debug_traceTransaction` with `callTracer`, showing nested contract calls with gas usage, decoded function names, and arguments
-- **Stack Trace** — source-mapped call frames with inline Solidity display, gas attribution per frame, and navigable call hierarchy. Requires Forge build artifacts with source maps imported via **Import from Forge**.
-- **Opcode Trace** — step-by-step EVM execution showing every opcode with program counter, gas cost, call depth, and stack. Includes source mapping to Solidity lines when code images are available, a gas summary with the top 5 most expensive opcodes, and expandable stack/storage state per step. Results are paginated for large traces.
-
-## Working with ABIs
-
-ABIs unlock decoded calldata, event logs, and custom error messages across the explorer.
-
-### Import from Forge
-
-The fastest way to load ABIs. On the **ABIs** page, click **Import from Forge** and select the Forge project root (or the `out/` directory). The explorer scans `out/` for compiled artifacts and cross-references `broadcast/` files to match each contract to its deployed address — then imports everything in one step, including code images and source files for execution tracing.
-
-Contracts found in artifacts but without a matching deployment are listed separately so an address can be assigned manually.
-
-For the best experience, the Forge project should be configured to emit build info, source maps, and storage layouts. Add this to `foundry.toml`:
+For full source mapping and storage layouts, add to `foundry.toml`:
 
 ```toml
 [profile.default]
 build_info = true
 ffi = true
 ast = true
-extra_output = [
-  "metadata",
-  "ir",
-  "irOptimized",
-  "storageLayout",
-  "devdoc",
-  "userdoc",
-  "evm.assembly"
-]
+extra_output = ["metadata", "ir", "irOptimized", "storageLayout", "devdoc", "userdoc", "evm.assembly"]
 ```
-
-This ensures the explorer has everything it needs for full calldata decoding, source-mapped stack traces, and the stepping debugger.
 
 ### ABI API (auto-sync)
 
-The explorer polls an ABI endpoint and automatically imports new or updated ABIs. A built-in local endpoint at `/api/abis` works out of the box — push ABIs to it from deployment scripts:
+Push ABIs from your deploy scripts to the built-in endpoint:
 
 ```bash
 curl -X POST http://127.0.0.1:7777/api/abis \
@@ -125,22 +66,19 @@ curl -X POST http://127.0.0.1:7777/api/abis \
   -d '{"address":"0x5Fb...aa3","label":"Token","artifact":{"abi":[...]}}'
 ```
 
-The explorer can also point at a custom service. The endpoint URL is configurable on the **ABIs** page or via `VITE_ABI_API_URL` at build time. Polling can be toggled on or off with the pill switch in the section header. See [API.md](./API.md) for the full endpoint spec.
+Or point at your own service — the endpoint URL is configurable on the ABIs page or via `VITE_ABI_API_URL`. See [API.md](./API.md) for the spec.
 
-### Manual upload
+### Manual Upload
 
-As a fallback, ABIs can be pasted directly from the **ABIs** page, a **contract address** page, or a **transaction** page. Accepts a raw ABI JSON array or a full Forge artifact JSON. A human-readable **label** can also be attached so the UI shows a contract name instead of just the address.
+Paste a raw ABI JSON array or full Forge artifact on the ABIs page, any contract address page, or any transaction page.
 
-### What gets decoded
+## Token Minting
 
-Once an ABI is saved for an address, the explorer automatically decodes:
-- **Transaction calldata** — function name and parameters
-- **Receipt logs** — event names and arguments
-- **Revert errors** — custom error names and arguments on failed transactions
+**ETH** — Config page → Mint Native Token. Additive — reads current balance and adds on top.
 
-For proxy contracts (ERC-1967), the explorer reads the implementation storage slot, resolves the implementation address, and merges both ABIs so that proxied calls and events are decoded correctly. The address page shows native and proxied public functions in separate tabs.
+**ERC-20** — Config page → Mint ERC20 Token, or use the inline mint on any token's address page. Enter the token contract, auto-detect decimals/symbol, specify recipient and amount. Works by brute-forcing the `balanceOf` storage slot (Solidity and Vyper layouts, slots 0–19) via `anvil_setStorageAt`.
 
 ## Docs
 
-- [API.md](./API.md) — Custom ABI endpoint integration
-- [DEVELOPER.md](./DEVELOPER.md) — Architecture, scripts, and implementation details
+- [API.md](./API.md) — ABI endpoint integration
+- [DEVELOPER.md](./DEVELOPER.md) — Architecture and implementation details
