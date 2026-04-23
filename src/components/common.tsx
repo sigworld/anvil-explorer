@@ -170,7 +170,7 @@ export function CopyButton(props: { value: string; label: string }) {
 }
 
 export function AppShell(props: { children: ComponentChildren }) {
-  const { activeEndpointId, chainMeta, endpoints, error, setActiveEndpointId, stats, status, statusMessage } = useExplorer()
+  const { activeEndpointId, chainMeta, demoMode, endpoints, enterDemo, error, exitDemo, setActiveEndpointId, stats, status, statusMessage } = useExplorer()
   const [pathname, setPathname] = useState(() => window.location.pathname)
   const [searchValue, setSearchValue] = useState('')
   const [searchError, setSearchError] = useState<string | null>(null)
@@ -349,6 +349,11 @@ export function AppShell(props: { children: ComponentChildren }) {
               </div>
             </div>
             <p class="status-copy">{statusMessage}</p>
+            {!demoMode && (status === 'error' || status === 'idle') && (
+              <button type="button" class="demo-try-button" onClick={enterDemo}>
+                Try Demo
+              </button>
+            )}
           </div>
         </section>
 
@@ -423,7 +428,14 @@ export function AppShell(props: { children: ComponentChildren }) {
           </form>
         </header>
 
-        {(error || searchError) && <section class="banner error-banner">{error ?? searchError}</section>}
+        {demoMode && (
+          <section class="banner demo-banner">
+            <span>Demo mode — exploring sample data without a live Anvil instance</span>
+            <button type="button" class="demo-banner-exit" onClick={exitDemo}>Exit Demo</button>
+          </section>
+        )}
+
+        {(error || searchError) && !demoMode && <section class="banner error-banner">{error ?? searchError}</section>}
 
         <main class="page-grid">{props.children}</main>
       </div>

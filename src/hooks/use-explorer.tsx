@@ -11,6 +11,15 @@ import {
 } from '../lib/db.ts'
 import { createLogger } from '../lib/logger.ts'
 import {
+  clearDemoParam,
+  DEMO_ENDPOINT,
+  DEMO_ENDPOINT_ID,
+  isDemoMode,
+  isDemoUrl,
+  seedDemoData,
+} from '../lib/demo.ts'
+import { createDemoChainMeta, createDemoStats } from '../lib/demo-data.ts'
+import {
   createAnvilClient,
   createSnapshot,
   dealErc20,
@@ -26,6 +35,7 @@ import type { ChainMeta, ExplorerEndpoint, ExplorerStats, ExplorerStatus, Opcode
 
 type ExplorerContextValue = {
   activeEndpointId: string
+  demoMode: boolean
   endpoints: ExplorerEndpoint[]
   chainMeta: ChainMeta | null
   abiApiUrl: string
@@ -37,6 +47,8 @@ type ExplorerContextValue = {
   setAbiApiUrl: (value: string) => void
   saveEndpoint: (input: { id?: string; name: string; rpcUrl: string; startBlock: number | null; color?: string }) => string
   deleteEndpoint: (id: string) => void
+  enterDemo: () => void
+  exitDemo: () => void
   snapshots: string[]
   status: ExplorerStatus
   stats: ExplorerStats
@@ -177,8 +189,18 @@ function areChainMetaEqual(left: ChainMeta | null, right: ChainMeta | null) {
 }
 
 export function ExplorerProvider(props: { children: ComponentChildren }) {
-  const [endpoints, setEndpoints] = useState<ExplorerEndpoint[]>(readInitialEndpoints)
+  const [endpoints, setEndpoints] = useState<ExplorerEndpoint[]>(() => {
+    const base = readInitialEndpoints()
+    if (isDemoUrl() && !base.some((ep) => ep.id === DEMO_ENDPOINT_ID)) {
+      return [...base, DEMO_ENDPOINT]
+    }
+    return base
+  })
   const [activeEndpointId, setActiveEndpointIdState] = useState(() => {
+    if (isDemoUrl()) {
+      clearDemoParam()
+      return DEMO_ENDPOINT_ID
+    }
     const stored = window.localStorage.getItem(ACTIVE_ENDPOINT_STORAGE_KEY)
     const initial = readInitialEndpoints()
     return stored && initial.some((ep) => ep.id === stored) ? stored : initial[0].id
@@ -220,6 +242,25 @@ export function ExplorerProvider(props: { children: ComponentChildren }) {
 
   useEffect(() => {
     let cancelled = false
+
+    // ── Demo mode: seed IDB and set static state ──
+    if (isDemoMode(activeEndpointId)) {
+      setStatus('syncing')
+      setStatusMessage('Loading demo data')
+
+      seedDemoData().then(() => {
+        if (cancelled) return
+        setChainMeta(createDemoChainMeta())
+        setStats(createDemoStats())
+        setStatus('ready')
+        setStatusMessage('Demo mode — explore with sample data')
+        setRefreshKey((current) => current + 1)
+      })
+
+      return () => { cancelled = true }
+    }
+
+    // ── Normal sync loop ──
     const client = createAnvilClient(rpcUrl)
     let hasConnectedOnce = false
     let consecutiveFailures = 0
@@ -305,7 +346,7 @@ export function ExplorerProvider(props: { children: ComponentChildren }) {
     return () => {
       cancelled = true
     }
-  }, [activeScopeKey, rpcUrl, startBlock, connectionVersion])
+  }, [activeScopeKey, rpcUrl, startBlock, connectionVersion, activeEndpointId])
 
   useEffect(() => {
     let cancelled = false
@@ -424,8 +465,34 @@ export function ExplorerProvider(props: { children: ComponentChildren }) {
     }
   }
 
+  const inDemoMode = isDemoMode(activeEndpointId)
+
+  function enterDemo() {
+    setEndpoints((current) =>
+      current.some((ep) => ep.id === DEMO_ENDPOINT_ID) ? current : [...current, DEMO_ENDPOINT],
+    )
+    // Can't use switchEndpoint here because setEndpoints hasn't applied yet.
+    // Manually perform the switch steps.
+    setSnapshots([])
+    setChainMeta(null)
+    setStats(EMPTY_STATS)
+    setError(null)
+    setStatus('idle')
+    setStatusMessage('Waiting to connect')
+    setActiveEndpointIdState(DEMO_ENDPOINT_ID)
+    setConnectionVersion((current) => current + 1)
+  }
+
+  function exitDemo() {
+    const nonDemoEndpoints = endpoints.filter((ep) => ep.id !== DEMO_ENDPOINT_ID)
+    if (nonDemoEndpoints.length === 0) return
+    setEndpoints(nonDemoEndpoints)
+    switchEndpoint(nonDemoEndpoints[0].id)
+  }
+
   const value: ExplorerContextValue = {
     activeEndpointId,
+    demoMode: inDemoMode,
     endpoints,
     abiApiUrl,
     chainMeta,
@@ -437,6 +504,8 @@ export function ExplorerProvider(props: { children: ComponentChildren }) {
     setAbiApiUrl,
     saveEndpoint,
     deleteEndpoint,
+    enterDemo,
+    exitDemo,
     snapshots,
     status,
     stats,

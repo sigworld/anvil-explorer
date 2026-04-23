@@ -1,5 +1,6 @@
 import {
   createPublicClient,
+  custom,
   encodeAbiParameters,
   getAddress,
   http,
@@ -23,6 +24,8 @@ import type {
   RpcReceipt,
   RpcTransaction,
 } from './types.ts'
+import { DEMO_RPC_URL } from './demo.ts'
+import { getDemoOpcodeTrace, getDemoTrace, isDemoContract } from './demo-data.ts'
 
 export type AnvilClient = PublicClient
 
@@ -34,7 +37,57 @@ const erc20ReadAbi = parseAbi([
   'function totalSupply() view returns (uint256)',
 ])
 
+function createDemoTransport() {
+  return custom({
+    async request({ method, params }: { method: string; params?: unknown[] }) {
+      switch (method) {
+        case 'eth_chainId':
+          return '0x7a69' // 31337
+        case 'eth_blockNumber':
+          return '0xa' // 10
+        case 'web3_clientVersion':
+          return 'anvil/v0.2.0 (demo)'
+        case 'eth_getCode': {
+          const addr = (params as string[] | undefined)?.[0]
+          if (addr && isDemoContract(addr)) return '0x6080604052348015600f57600080fd5b50'
+          return '0x'
+        }
+        case 'eth_getBalance':
+          return toHex(10000000000000000000n) // 10 ETH
+        case 'eth_getStorageAt':
+          return '0x0000000000000000000000000000000000000000000000000000000000000000'
+        case 'eth_call':
+          return '0x0000000000000000000000000000000000000000000000000000000000000000'
+        case 'anvil_nodeInfo':
+          return { currentBlockNumber: 10, currentBlockTimestamp: Math.floor(Date.now() / 1000), environment: {}, forkConfig: null }
+        case 'debug_traceTransaction': {
+          const txHash = (params as Hex[] | undefined)?.[0]
+          if (!txHash) throw new Error('Missing tx hash')
+          const tracerConfig = (params as unknown[])?.[1] as Record<string, unknown> | undefined
+          // Call tracer → return call tree; default → return opcode trace
+          if (tracerConfig?.tracer === 'callTracer') {
+            const trace = getDemoTrace(txHash)
+            if (!trace) throw new Error('Transaction not found in demo data')
+            return trace
+          }
+          const opcodeTrace = getDemoOpcodeTrace(txHash)
+          if (!opcodeTrace) throw new Error('Transaction not found in demo data')
+          return { gas: opcodeTrace.totalGas, structLogs: opcodeTrace.entries.map((e) => ({
+            pc: e.pc, op: e.op, gas: e.gas, gasCost: e.gasCost, depth: e.depth,
+            stack: e.stack, memory: e.memory, storage: e.storage, returnData: e.returnData,
+          })) }
+        }
+        default:
+          throw new Error(`Demo mode: ${method} is not available`)
+      }
+    },
+  })
+}
+
 export function createAnvilClient(rpcUrl: string): AnvilClient {
+  if (rpcUrl === DEMO_RPC_URL) {
+    return createPublicClient({ transport: createDemoTransport() })
+  }
   return createPublicClient({
     transport: http(rpcUrl),
   })

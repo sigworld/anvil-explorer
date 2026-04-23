@@ -1593,6 +1593,54 @@ button.link-button:hover {
   color: var(--danger);
 }
 
+.demo-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--surface-warning);
+  color: var(--warning);
+  font-size: var(--font-xs);
+  font-weight: 500;
+  border-bottom: 1px solid color-mix(in srgb, var(--warning) 20%, transparent);
+}
+
+.demo-banner-exit {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  font-size: var(--font-xs);
+  font-weight: 600;
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning) 25%, transparent);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.demo-banner-exit:hover {
+  background: color-mix(in srgb, var(--warning) 22%, transparent);
+}
+
+.demo-try-button {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px 12px;
+  font-size: var(--font-xs);
+  font-weight: 600;
+  color: var(--info);
+  background: var(--surface-info);
+  border: 1px solid color-mix(in srgb, var(--info) 20%, transparent);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.demo-try-button:hover {
+  background: color-mix(in srgb, var(--info) 16%, transparent);
+}
+
 .success-copy {
   color: var(--success);
 }
